@@ -5,6 +5,7 @@ import { loadServerEnv } from "@/server/env";
 import { claimPipelineStep, startPipelineRun } from "@/server/pipeline-service";
 import { getAuthenticatedUser } from "@/server/request-auth";
 import { withDatabase } from "@/server/storage";
+import { ValidationError } from "@/domain/validation";
 
 export const runtime = "nodejs";
 
@@ -18,11 +19,32 @@ export async function POST(
 ) {
   try {
     const { characterId, projectId } = await params;
+    let generationRunId: string;
+    if (!request.body) {
+      throw new ValidationError("Generation run is required.");
+    }
+    {
+      try {
+        const body: unknown = await request.json();
+        if (!body || typeof body !== "object" || Array.isArray(body)) {
+          throw new ValidationError("Generation run is required.");
+        }
+        const value = (body as Record<string, unknown>).generationRunId;
+        if (typeof value !== "string" || !value.trim()) {
+          throw new ValidationError("Generation run is invalid.");
+        }
+        generationRunId = value;
+      } catch (error) {
+        if (error instanceof ValidationError) throw error;
+        throw new ValidationError("Send a valid portrait payload.");
+      }
+    }
     const env = loadServerEnv();
     const result = withDatabase((database) => {
       const user = getAuthenticatedUser(database, request);
       if (!user) return null;
       const claim = claimPipelineStep(database, {
+        generationRunId,
         portraitCharacterId: characterId,
         projectId,
         staleRunMs: env.staleRunMs,

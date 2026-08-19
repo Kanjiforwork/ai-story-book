@@ -52,13 +52,14 @@ describe("generated asset security", () => {
       .prepare(
         `
           INSERT INTO assets
-            (id, project_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
-          VALUES (?, ?, 'PORTRAIT', ?, ?, ?, ?, ?, ?)
+            (id, project_id, generation_run_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
+          VALUES (?, ?, ?, 'PORTRAIT', ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
         asset.id,
         project.id,
+        project.activeGenerationRunId,
         asset.storageKey,
         asset.mimeType,
         asset.byteSize,

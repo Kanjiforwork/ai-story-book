@@ -2,19 +2,19 @@
 
 ## Strategy
 
-Backend tests exercise the pipeline as a state machine: ordered step claims, persisted run IDs, ownership checks, SQLite transitions, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
+Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
 
-Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, running and stale copy, retry affordances, private asset URLs, item progress, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px and desktop width to check overflow, labels, real controls, and visible focus treatment.
+Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, run-history selection without generation, read-only previous-run rendering, running and stale copy, retry affordances, private asset URLs, item progress, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px and desktop width to check overflow, labels, real controls, and visible focus treatment.
 
-## Actual M5 verification
+## Actual generation-run verification
 
 Commands were run sequentially from `/Users/bao/GitHub/ai-story-book`.
 
 ### `npm test`
 
 ```text
-Test Files  13 passed (13)
-Tests       52 passed (52)
+Test Files  14 passed (14)
+Tests       59 passed (59)
 ```
 
 ### `npm run check`
@@ -68,7 +68,7 @@ Covered by automated tests unless marked otherwise:
 - Old, missing, and invalid heartbeats are considered stale.
 - A long in-flight Gemini call refreshes its persisted heartbeat and does not become falsely stale.
 - Recovering a stale run prevents the old runner from making a Gemini call in the checked race path.
-- Explicit retry creates a new run and increments the attempt.
+- Explicit retry creates a new step attempt inside the selected generation run and increments the attempt.
 - Portrait partial success preserves completed assets.
 - Portrait retry runs only failed items.
 - Chapter and illustration retries preserve upstream style, character, portrait, and chapter results.
@@ -78,6 +78,7 @@ Covered by automated tests unless marked otherwise:
 - Traversal-like asset keys and missing backing files are rejected.
 - Refresh/read-back and server restart preserve book text, style, characters, prompts, and asset records.
 - Frontend running, failed, stale, partial-success, completed, and private-asset states have regression coverage.
+- Generation-run direct-style, source-reuse, isolation, selection, and read-only history behavior has regression coverage.
 
 ## Deliberate omissions
 

@@ -14,6 +14,7 @@ export type ApiErrorCode =
   | "STEP_ORDER"
   | "STEP_ALREADY_COMPLETED"
   | "RUN_ALREADY_ACTIVE"
+  | "RUN_READ_ONLY"
   | "STALE_RUN"
   | "STEP_NOT_AVAILABLE"
   | "GEMINI_FAILED"

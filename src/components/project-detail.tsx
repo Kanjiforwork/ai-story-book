@@ -8,7 +8,7 @@ import {
   PIPELINE_STEP_LABELS,
   isImplementedPipelineStep,
 } from "@/domain/pipeline";
-import type { ProjectDetailView } from "@/domain/project";
+import type { GenerationRunView, ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
 import { ChapterList } from "@/components/chapter-list";
 import { CharacterGrid } from "@/components/character-grid";
@@ -39,12 +39,16 @@ export function ProjectDetail({
   const [retryingCharacterId, setRetryingCharacterId] = useState<string | null>(
     null,
   );
+  const [regenerating, setRegenerating] = useState(false);
   const latestRefreshId = useRef(0);
   const implementedSteps = project.steps.filter((step) =>
     isImplementedPipelineStep(step.key),
   );
-  const currentStep =
-    implementedSteps.find((step) => step.status !== "COMPLETED") ?? null;
+  const selectedRun = project.generationRuns?.find((run) => run.isSelected);
+  const selectedRunReadOnly = project.selectedRunReadOnly ?? false;
+  const currentStep = selectedRunReadOnly
+    ? null
+    : (implementedSteps.find((step) => step.status !== "COMPLETED") ?? null);
   const implementedPipelineComplete =
     implementedSteps.length === IMPLEMENTED_PIPELINE_STEPS.length &&
     implementedSteps.every((step) => step.status === "COMPLETED");
@@ -97,7 +101,12 @@ export function ProjectDetail({
         `/api/projects/${project.id}/steps/${currentStep.key}/run`,
         {
           body: JSON.stringify(
-            currentStep.key === "STYLE" ? { style: styleDraft } : {},
+            currentStep.key === "STYLE"
+              ? {
+                  generationRunId: project.activeGenerationRunId,
+                  style: styleDraft,
+                }
+              : { generationRunId: project.activeGenerationRunId },
           ),
           headers: { "content-type": "application/json" },
           method: "POST",
@@ -123,7 +132,13 @@ export function ProjectDetail({
     try {
       const response = await fetch(
         `/api/projects/${project.id}/steps/${currentStep.key}/recover`,
-        { method: "POST" },
+        {
+          body: JSON.stringify({
+            generationRunId: project.activeGenerationRunId,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
       );
       const payload = (await response.json()) as { message?: string };
       if (!response.ok) {
@@ -145,7 +160,13 @@ export function ProjectDetail({
     try {
       const response = await fetch(
         `/api/projects/${project.id}/portraits/${characterId}/retry`,
-        { method: "POST" },
+        {
+          body: JSON.stringify({
+            generationRunId: project.activeGenerationRunId,
+          }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
       );
       const payload = (await response.json()) as { message?: string };
       if (!response.ok) {
@@ -160,6 +181,60 @@ export function ProjectDetail({
     } finally {
       setRetryingCharacterId(null);
       setPendingAction(null);
+    }
+  }
+
+  async function selectRun(run: GenerationRunView) {
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${project.id}/generation-runs/${run.id}/select`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        setActionError(payload.message ?? "This run could not be selected.");
+        return;
+      }
+      await refreshProject();
+    } catch {
+      setActionError("The server could not be reached. Try again.");
+    }
+  }
+
+  async function regenerateRun() {
+    const style = styleDraft.trim();
+    if (
+      !window.confirm(
+        "Start a new generation run? Existing results will remain available as a previous run.",
+      )
+    ) {
+      return;
+    }
+    setRegenerating(true);
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${project.id}/generation-runs`,
+        {
+          body: JSON.stringify({ style }),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
+      );
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        setActionError(
+          payload.message ?? "A new generation run could not start.",
+        );
+        return;
+      }
+      setStyleDraft("");
+      await refreshProject();
+    } catch {
+      setActionError("The server could not be reached. Try again.");
+    } finally {
+      setRegenerating(false);
     }
   }
 
@@ -184,7 +259,69 @@ export function ProjectDetail({
             Created {formatDate(project.createdAt)} · {project.completedSteps}{" "}
             of {project.totalSteps} steps complete
           </p>
+          {selectedRun ? (
+            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-ink-muted">
+              {selectedRunReadOnly
+                ? "Viewing previous run"
+                : "Current generation run"}{" "}
+              · {selectedRun.style ?? "Style pending"}
+            </p>
+          ) : null}
         </div>
+
+        {project.generationRuns && project.generationRuns.length > 1 ? (
+          <section
+            aria-labelledby="runs-heading"
+            className="mt-8 rounded-3xl bg-paper p-6 sm:p-8"
+          >
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
+                  Generation history
+                </p>
+                <h2 className="mt-2 text-2xl font-semibold" id="runs-heading">
+                  Choose a saved run
+                </h2>
+              </div>
+              <span className="text-xs text-ink-muted">
+                Selecting a run does not call Gemini
+              </span>
+            </div>
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {project.generationRuns.map((run) => (
+                <article
+                  className="rounded-2xl border border-line/60 bg-surface p-4"
+                  key={run.id}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-semibold">
+                        {run.style ?? "Style pending"}
+                      </h3>
+                      <p className="mt-1 text-xs text-ink-muted">
+                        {run.completedSteps} of {run.totalSteps} steps ·{" "}
+                        {run.status.toLowerCase()}
+                      </p>
+                    </div>
+                    {run.isSelected ? (
+                      <span className="rounded-full bg-ink px-2.5 py-1 text-[11px] font-bold text-white">
+                        Selected
+                      </span>
+                    ) : (
+                      <button
+                        className="min-h-10 rounded-xl border border-line px-3 text-xs font-bold text-ink-body transition hover:border-orange hover:text-orange-deep"
+                        onClick={() => void selectRun(run)}
+                        type="button"
+                      >
+                        Use previous run
+                      </button>
+                    )}
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
+        ) : null}
 
         <section aria-labelledby="stepper-heading" className="mt-8">
           <div className="mb-4 flex items-center justify-between gap-4">
@@ -243,30 +380,59 @@ export function ProjectDetail({
         </section>
 
         <div className="mt-8">
-          <StepActionPanel
-            actionError={actionError}
-            currentStep={currentStep}
-            onRecover={recoverCurrentStep}
-            onRun={runCurrentStep}
-            onStyleDraftChange={setStyleDraft}
-            pending={pendingAction !== null}
-            styleDraft={styleDraft}
-            implementedPipelineComplete={implementedPipelineComplete}
-          />
+          {selectedRunReadOnly ? (
+            <section className="rounded-3xl border border-line/60 bg-paper p-6 sm:p-8">
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
+                Read-only history
+              </p>
+              <h2 className="mt-2 text-2xl font-semibold">
+                Saved output from a previous run
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-ink-body">
+                Use these results for reference, or start a new generation run
+                when you want fresh output.
+              </p>
+              <button
+                className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-orange px-4 text-sm font-bold text-white transition hover:bg-orange-hover disabled:opacity-60"
+                disabled={regenerating}
+                onClick={() => void regenerateRun()}
+                type="button"
+              >
+                {regenerating ? "Starting…" : "Regenerate"}
+              </button>
+            </section>
+          ) : (
+            <StepActionPanel
+              actionError={actionError}
+              currentStep={currentStep}
+              onRecover={recoverCurrentStep}
+              onRun={runCurrentStep}
+              onStyleDraftChange={setStyleDraft}
+              pending={pendingAction !== null}
+              styleDraft={styleDraft}
+              implementedPipelineComplete={implementedPipelineComplete}
+            />
+          )}
         </div>
 
         <CharacterGrid
           characters={project.characters}
           onRetry={
-            portraitStep?.status === "FAILED" && !portraitStep.run.isStale
+            !selectedRunReadOnly &&
+            portraitStep?.status === "FAILED" &&
+            !portraitStep.run.isStale
               ? retryPortrait
               : undefined
           }
+          readOnly={selectedRunReadOnly}
           retryDisabled={pendingAction !== null}
           retryingCharacterId={retryingCharacterId}
         />
 
-        <ChapterList chapters={project.chapters} />
+        <ChapterList
+          chapters={project.chapters}
+          readOnly={selectedRunReadOnly}
+        />
 
         <div className="mt-10 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
           <section
@@ -305,6 +471,32 @@ export function ProjectDetail({
               {project.style ??
                 "Generate Style first. Characters will use the saved style as context."}
             </p>
+            {!selectedRunReadOnly && currentStep?.key !== "STYLE" ? (
+              <div className="mt-6 border-t border-line/60 pt-5">
+                <label
+                  className="block text-sm font-semibold"
+                  htmlFor="regenerate-style"
+                >
+                  New style for a fresh run
+                </label>
+                <input
+                  className="mt-2 min-h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-orange focus:ring-4 focus:ring-orange/15"
+                  id="regenerate-style"
+                  maxLength={500}
+                  onChange={(event) => setStyleDraft(event.target.value)}
+                  placeholder="e.g. ink wash with copper accents"
+                  value={styleDraft}
+                />
+                <button
+                  className="mt-3 min-h-11 rounded-xl border border-orange px-4 text-sm font-bold text-orange-deep transition hover:bg-orange hover:text-white disabled:opacity-60"
+                  disabled={regenerating}
+                  onClick={() => void regenerateRun()}
+                  type="button"
+                >
+                  {regenerating ? "Starting…" : "Start new run"}
+                </button>
+              </div>
+            ) : null}
           </aside>
         </div>
       </main>

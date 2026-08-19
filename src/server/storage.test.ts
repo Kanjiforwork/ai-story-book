@@ -27,7 +27,7 @@ describe("local SQLite bootstrap", () => {
       .prepare("SELECT value FROM schema_meta WHERE key = ?")
       .get("schema_version") as { value: string } | undefined;
 
-    expect(row?.value).toBe("5");
+    expect(row?.value).toBe("6");
     expect(
       database
         .prepare(
@@ -113,7 +113,7 @@ describe("local SQLite bootstrap", () => {
       database
         .prepare("SELECT value FROM schema_meta WHERE key = ?")
         .get("schema_version"),
-    ).toEqual({ value: "5" });
+    ).toEqual({ value: "6" });
     expect(
       database
         .prepare(
@@ -159,7 +159,7 @@ describe("local SQLite bootstrap", () => {
       database
         .prepare("SELECT value FROM schema_meta WHERE key = ?")
         .get("schema_version"),
-    ).toEqual({ value: "5" });
+    ).toEqual({ value: "6" });
     expect(
       database
         .prepare(

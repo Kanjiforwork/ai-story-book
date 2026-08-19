@@ -759,13 +759,14 @@ describe("mocked portrait pipeline", () => {
       .prepare(
         `
           INSERT INTO characters
-            (id, project_id, position, name, prompt, created_at, updated_at)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+            (id, project_id, generation_run_id, position, name, prompt, created_at, updated_at)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `,
       )
       .run(
         "third-character",
         fixture.project.id,
+        fixture.project.activeGenerationRunId,
         2,
         "Badger",
         detailedPrompt,
@@ -798,13 +799,14 @@ describe("mocked chapter and illustration pipeline", () => {
     const insertChapter = database.prepare(
       `
         INSERT INTO chapters
-          (id, project_id, position, name, prompt, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+          (id, project_id, generation_run_id, position, name, prompt, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
       `,
     );
     insertChapter.run(
       "chapter-one",
       fixture.project.id,
+      fixture.project.activeGenerationRunId,
       0,
       "One",
       "A scene.",
@@ -814,6 +816,7 @@ describe("mocked chapter and illustration pipeline", () => {
     insertChapter.run(
       "chapter-two",
       fixture.project.id,
+      fixture.project.activeGenerationRunId,
       1,
       "Two",
       "Another scene.",
@@ -1198,13 +1201,14 @@ describe("mocked chapter and illustration pipeline", () => {
       .prepare(
         `
           INSERT INTO chapters
-            (id, project_id, position, name, prompt, created_at, updated_at)
-          VALUES (?, ?, 0, ?, ?, ?, ?)
+            (id, project_id, generation_run_id, position, name, prompt, created_at, updated_at)
+          VALUES (?, ?, ?, 0, ?, ?, ?, ?)
         `,
       )
       .run(
         "chapter-stale",
         fixture.project.id,
+        fixture.project.activeGenerationRunId,
         "The Interrupted River",
         "A saved chapter prompt.",
         now,

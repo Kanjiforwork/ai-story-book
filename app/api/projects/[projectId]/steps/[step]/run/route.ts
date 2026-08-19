@@ -34,6 +34,10 @@ export async function POST(
       throw new ValidationError("Unknown pipeline step.");
     }
     const body = await readBody(request);
+    const generationRunId = body.generationRunId;
+    if (typeof generationRunId !== "string" || !generationRunId.trim()) {
+      throw new ValidationError("Generation run is invalid.");
+    }
     const requestedStyle = normalizeOptionalStyle(body.style);
     if (rawStep !== "STYLE" && requestedStyle) {
       throw new ValidationError(
@@ -46,6 +50,7 @@ export async function POST(
       const user = getAuthenticatedUser(database, request);
       if (!user) return null;
       const claim = claimPipelineStep(database, {
+        generationRunId,
         projectId,
         staleRunMs: env.staleRunMs,
         step: rawStep,

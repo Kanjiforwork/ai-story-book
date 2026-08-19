@@ -105,12 +105,12 @@ Next.js App Router pages + route handlers
 
 1. A mutation arrives with the session cookie and project ID.
 2. The server authenticates the session and checks ownership.
-3. The server validates the requested step and current state.
-4. A SQLite transaction atomically creates a run claim and marks the step `running`; a second request observes the existing run instead of claiming it.
-5. The runner loads persisted inputs, calls the Gemini adapter, validates structured output, and writes each durable result.
+3. The server resolves the selected generation run and validates the requested step against that run's current state.
+4. A SQLite transaction atomically creates a step-attempt claim and marks the step `running`; a second request observes the existing run instead of claiming it.
+5. The runner loads the run's persisted source reference, style, and upstream outputs, calls the Gemini adapter, validates structured output, and writes each durable result with the generation-run ID.
 6. Each item write is committed independently where partial progress is possible.
-7. The step and run are finalized in a transaction as `completed` or `failed`.
-8. The client polls the project view while a step is running, then renders the returned server state.
+7. The step and step attempt are finalized in a transaction as `completed` or `failed`.
+8. The client polls the selected generation run while a step is running, then renders the returned server state.
 
 The runner is intentionally local and in-process. A process restart may strand a run, but the persisted timestamp makes it recoverable through the explicit stale recovery flow; no distributed worker guarantee is claimed.
 
@@ -122,17 +122,33 @@ The database stores metadata and state. Book text and image bytes remain on the 
 
 - `users`: normalized email, display name, timestamps.
 - `sessions`: opaque token hash, user ID, created/last-seen/revoked timestamps.
-- `projects`: owner, title, book-text asset key, optional Gemini source file URI, derived display status, timestamps.
-- `project_steps`: one row for each ordered step, status, run ID, attempt count, timestamps, error code/message, and last heartbeat.
-- `characters`: project-owned name and prompt, ordered position, portrait status, asset ID, error details.
-- `chapters`: project-owned name and prompt, ordered position, illustration status, asset ID, error details.
-- `assets`: owner/project relation, kind, opaque storage key, MIME type, byte size, checksum, and timestamps.
-- `pipeline_runs`: immutable run ID, project/step relation, attempt, claimed/finished timestamps, and terminal outcome.
-- `gemini_interactions`: project/step relation, interaction ID, model ID, source file URI/reference metadata, and timestamps. Do not store API keys or raw secrets.
+- `projects`: owner, title, book-text asset key, source snapshot/hash, optional Gemini source file URI, active generation-run ID, derived display status, and timestamps.
+- `project_steps`: one row for each ordered step in a generation run, status, active step-attempt ID, attempt count, timestamps, error code/message, and last heartbeat.
+- `characters`: project/generation-run-owned name and prompt, ordered position, portrait status, asset ID, and error details.
+- `chapters`: project/generation-run-owned name and prompt, ordered position, illustration status, asset ID, and error details.
+- `assets`: owner/project/generation-run relation, kind, opaque storage key, MIME type, byte size, checksum, and timestamps.
+- `generation_runs`: one user-visible generation configuration for a project, including source snapshot, style value, style revision, prompt/model fingerprints, status, and timestamps.
+- `pipeline_runs`: immutable step-attempt ID, generation-run/step relation, attempt, claimed/finished timestamps, input fingerprint, and terminal outcome.
+- `gemini_interactions`: project/generation-run/step relation, interaction ID, previous interaction ID, model ID, source file URI/reference metadata, and timestamps. Do not store API keys or raw secrets.
 
 Use foreign keys and indexes for ownership and ordered lookup. Use generated IDs, not user-controlled titles or paths, in filesystem keys.
 
-### 5.2 Step state machine
+### 5.2 Generation runs, style changes, and reuse semantics
+
+Reuse is scoped to one project and one source snapshot. It is never a global cache shared by different stories or users.
+
+- The project owns the uploaded source reference (`fileUri` or equivalent). Uploading the same book once is reusable input preparation, not reusable generated output.
+- A `generation_run` represents one coherent style configuration, such as `anime` or `watercolor`. Characters, chapters, image items, interactions, and assets produced by that configuration reference its run ID.
+- The project view selects one active generation run. Previous runs remain read-only and can be displayed as history; they are not silently mixed with the active run.
+- Reopening an existing run reads its persisted database state and local assets. It does not call Gemini again.
+- An explicit `Regenerate` action creates a new generation run and new step attempts. It may reuse the project's uploaded source reference, but it starts a fresh text interaction chain so an old style cannot leak into the new run.
+- A style change requires confirmation because downstream characters, portraits, chapters, and illustrations become stale and may consume text and image-generation credits. Old results are preserved as a previous run; they are not deleted.
+- A non-empty user style is a direct input to the new run and does not require a Gemini acknowledgement call. A blank style uses a fresh Style generation call against the project's source reference.
+- If a user returns to a previously used style, the UI offers `Use previous run` (no new model call) separately from `Regenerate` (new model calls). Same inputs do not guarantee the same output when Gemini is called again.
+
+Implementation identity for a reusable result is `project_id + generation_run_id + step/item + prompt_version + model_id`. A source hash and style fingerprint should be stored for diagnostics and to explain why a result is reusable or stale. Never select a result by project ID alone.
+
+### 5.3 Step state machine
 
 ```text
 pending ──start──▶ running ──success──▶ completed
@@ -149,14 +165,15 @@ Rules:
 - `running` is valid only while its run heartbeat is fresh.
 - A stale run can be explicitly recovered once; recovery marks it retryable and never invokes Gemini.
 - A failed step may be retried only by an explicit user action.
-- A retry creates a new run ID and preserves completed upstream outputs.
+- A retry creates a new step-attempt ID inside the same generation run and preserves completed upstream outputs.
+- An explicit style change or `Regenerate` action creates a new generation run; it never mutates the old run's outputs.
 - For image steps, item state is independent. Completed items are skipped on retry; failed or pending items are eligible.
-- A project is `Draft` when no step has completed, `In progress` when work exists but the final step is not complete, and `Done` only when all five steps are complete. The project status is derived, not separately mutated by the browser.
+- A project is `Draft` when no step has completed in the active generation run, `In progress` when work exists but the final step is not complete, and `Done` only when all five steps are complete. The project status is derived, not separately mutated by the browser.
 
-### 5.3 Run claim and stale recovery rules
+### 5.4 Run claim and stale recovery rules
 
 - `start` performs a conditional transactional update/insert that succeeds only for a claimable step (`pending` or `failed`) with no fresh active run.
-- The active run ID is random and persisted before the external Gemini call.
+- The active step-attempt ID is random and persisted before the external Gemini call.
 - A duplicate request returns the existing run view or a typed `RUN_ALREADY_ACTIVE` response; it never starts another Gemini call.
 - The runner updates `heartbeat_at` between external calls and item writes.
 - Default stale threshold: 2 minutes since the last heartbeat, configurable for tests through an environment variable.
@@ -174,7 +191,10 @@ All API responses use JSON. Errors have a stable `code`, human-readable `message
 | `GET` | `/api/projects` | Return the authenticated user's projects with derived status and five-step progress. |
 | `POST` | `/api/projects` | Validate title/text or normalized `.txt` content, persist project, return project summary. |
 | `GET` | `/api/projects/:projectId` | Return the owned project view model, full book text, steps, characters, chapters, and safe asset URLs. |
-| `POST` | `/api/projects/:projectId/steps/:step/run` | Validate order, atomically claim the step, and start the local runner. Accept optional style input only for `STYLE`. |
+| `GET` | `/api/projects/:projectId/generation-runs` | Return the owned project's active and previous generation runs with style, status, and durable progress summaries. |
+| `POST` | `/api/projects/:projectId/generation-runs` | Create a new style configuration from the stored source reference. A non-empty style is persisted directly and marks `STYLE` complete; a blank style leaves `STYLE` pending for Gemini generation. The old run remains read-only. |
+| `POST` | `/api/projects/:projectId/generation-runs/:runId/select` | Select an existing owned run for viewing without invoking Gemini. This is the `Use previous run` path. |
+| `POST` | `/api/projects/:projectId/steps/:step/run` | Validate order for the selected `generationRunId`, atomically claim the step, and start the local runner. It never falls back to a different run. |
 | `POST` | `/api/projects/:projectId/steps/:step/recover` | Explicitly recover an owned stale run without invoking Gemini. |
 | `GET` | `/api/assets/:assetId` | Stream an asset only after checking that the current session owns its project. Never accept a raw filesystem path. |
 
@@ -186,6 +206,7 @@ All API responses use JSON. Errors have a stable `code`, human-readable `message
 - Book text: required, UTF-8 text, maximum 200,000 characters.
 - Upload: `.txt` extension and `text/plain`-compatible content, maximum 2 MB; normalize line endings and reject unreadable/binary content.
 - Optional style: maximum 500 characters and accepted only on the Style step.
+- Generation run: every step mutation must include or resolve an owned active `generationRunId`; a previous run cannot be mutated after selection.
 - Gemini structured outputs: reject malformed JSON, missing required fields, non-adult character entries, more than 2 characters, or more than 1 chapter before persistence.
 - Error codes: `AUTH_REQUIRED`, `FORBIDDEN`, `VALIDATION`, `STEP_ORDER`, `RUN_ALREADY_ACTIVE`, `STALE_RUN`, `GEMINI_FAILED`, `GEMINI_RATE_LIMIT`, `GEMINI_INVALID_OUTPUT`, `ASSET_WRITE_FAILED`, and `NOT_FOUND`.
 
@@ -197,16 +218,16 @@ The implementation must first run and understand the notebook section “Illustr
 
 - Read the API key only on the server from `GEMINI_API_KEY`.
 - Configure text and image model IDs through environment variables. Defaults must be verified against the current notebook/API before implementation because model IDs change.
-- Upload the source book content once and persist the returned source file URI or equivalent reusable reference.
-- Persist each text interaction ID and use notebook-compatible context chaining for Style → Characters → Chapters.
+- Upload the source book content once per source snapshot and persist the returned source file URI or equivalent reusable reference at project level.
+- For every generation run, start a fresh text interaction chain that references the stored source file; persist each interaction ID and chain Style → Characters → Chapters only within that run.
 - Validate every structured response at the server boundary before changing durable step state.
 - Do not send the full book text again for every step.
 - Do not automatically retry a failed Gemini request.
 
 ### Step-specific behavior
 
-1. **Style**: use the persisted book reference and optional user style; request structured style output; persist the style and interaction metadata only after valid output.
-2. **Characters**: continue the text context, request adult characters with image prompts, enforce the maximum of 2 server-side, and persist the ordered list.
+1. **Style**: for a non-empty user style, persist the exact normalized value as a direct override without a Gemini acknowledgement call; for blank input, use the persisted book reference in the new run's root interaction and request structured style output.
+2. **Characters**: continue the current generation run's text context, request adult characters with image prompts, enforce the maximum of 2 server-side, and persist the ordered list with that run ID.
 3. **Portraits**: construct image requests from the shared style and character prompts; execute eligible characters with `Promise.allSettled`; write each successful image asset immediately and retain item-level failures.
 4. **Chapters**: continue text context and pass explicit character names/prompts plus explicit portrait references; enforce the maximum of 1 chapter before persistence.
 5. **Illustrations**: generate the eligible chapter image with the style, chapter prompt, and portrait references; persist the image before finalizing the step.
@@ -243,6 +264,50 @@ The UI language is English-only. Portrait cards use the demo's 3:4 framing and c
 
 While polling, the client may update transient visual state but must always replace it with the latest server view model. Polling stops on `completed`, `failed`, or `stale`; it must not create a second run. The browser must show completed image items as soon as they appear in the server response.
 
+### UX hardening action plan
+
+This is a focused UX fix slice before handoff. It addresses observed trust, layout, and waiting-time problems without adding new product scope.
+
+#### P0 — Make long-running work legible
+
+- Replace spinner-only feedback with an animated indeterminate progress bar, named phase copy, and elapsed time from the persisted run start. Never show a guessed percentage or promise an ETA that Gemini does not provide.
+- For image steps, show honest determinate item progress such as `1 of 2 portraits saved`; keep each completed image visible while the remaining item runs.
+- Keep a fixed 3:4 portrait frame and 16:10 illustration frame during loading, success, and failure so content never changes the media ratio.
+- Add a concise `aria-live` status update when the phase or item count changes; do not announce every polling tick.
+- Acceptance: after starting any step, a user can identify the step, current phase, elapsed time, and completed item count without relying on a frozen-looking icon.
+
+#### P0 — Make custom style input fast and clear
+
+- Treat a non-empty style input as a user-owned override. Save it exactly as entered and skip the redundant Gemini acknowledgement call.
+- Defer source-book upload/context creation until the first text-generation step that needs it; this preserves the one-source-context rule without making `anime` wait for a no-op request.
+- Use `Style direction` as the label, `Use this style` as the action when text is present, and explain that the value is applied to later prompts.
+- Keep the blank-input path explicit: `Generate style from book`, with copy that acknowledges it requires a Gemini call.
+- Acceptance: entering `anime` completes Style without a Gemini text call, displays `anime` as the saved style, and passes it to Characters/Images; a blank style still invokes the style-generation path.
+
+#### P1 — Reveal new results without stealing the page
+
+- When a user-started run first creates a result or image, scroll once to the relevant result section using smooth motion unless reduced motion is enabled.
+- Do not scroll on every poll or when the user is already reading elsewhere. If the user has moved away, show a small `New result ready · View` anchor instead.
+- Acceptance: the first portrait, chapter result, and final illustration are discoverable immediately after they arrive, while manual scrolling remains stable.
+
+#### P1 — Keep prompts from resizing artwork
+
+- Replace inline expanding `<details>` for long illustration prompts with an accessible modal or bounded prompt panel (`max-height` plus internal scrolling).
+- Keep the image container fixed and top-aligned even when prompt content grows; the prompt must never determine the illustration height.
+- Acceptance: opening `View illustration prompt` does not change the illustration's 16:10 framing or create a long viewport jump; Escape, focus return, keyboard access, and reduced motion work.
+
+#### P1 — Remove low-value visual noise
+
+- Hide `Attempt 1` on the first run; show attempt history only when a retry exists.
+- Keep the saved-style card content-sized and top-aligned instead of stretching it to the full height of the book-text panel.
+- Add a subtle `New`/saved transition only when a real result arrives; do not animate the entire page or replace existing assets.
+
+#### P2 — Verify the interaction contract
+
+- Add focused component tests for running progress, item-level progress, custom-style fast path, prompt modal behavior, and result-reveal targeting.
+- Manually verify the primary flow at 375px, 768px, 1024px, and 1440px, including keyboard focus, reduced motion, long prompts, slow Gemini calls, partial image failure, refresh during polling, and stale recovery.
+- Record actual commands and the manual UX checklist in `TESTING.md`; do not claim progress or visual verification without running it.
+
 ## 10. Test and evidence plan
 
 Automated tests use mocked Gemini and a temporary SQLite/filesystem data directory. Real Gemini is reserved for deliberate local UAT and must not be required for the test command.
@@ -254,6 +319,8 @@ Automated tests use mocked Gemini and a temporary SQLite/filesystem data directo
 | Ordered execution | Each step requires explicit action and a completed predecessor | Backend state-transition tests for wrong order and repeated completion |
 | Hard caps | At most 2 adult characters and 1 chapter survive server validation | Malformed/over-limit Gemini output tests; UI does not bypass server cap |
 | Single source upload/context | Book content is uploaded once and later text calls reuse persisted context | Gemini adapter spy asserts one upload and chained interaction references |
+| Generation-run isolation | Two styles in one project keep separate outputs while reusing the same source reference | Create `anime` and `watercolor` runs; assert fresh interaction roots, run-scoped assets, no cross-run characters, and one source upload |
+| Reuse versus regenerate | Reopening or selecting a previous run makes no model call; explicit regenerate creates new output | Stub Gemini and count calls for reopen/select versus regenerate; assert old run remains unchanged |
 | Duplicate protection | Double-click, refresh, and second tab share one active run | Concurrent claim test with two requests; only one Gemini invocation occurs |
 | Durable resume | Refresh/logout/restart preserves completed steps and assets | Reopen project after each step; restart fixture and persisted-state test |
 | Image partial progress | Successful portrait remains visible when another image fails | `Promise.allSettled` test; asset persisted before step finalization; retry skips success |
@@ -284,7 +351,8 @@ Each milestone is a candidate small, reviewable commit boundary with focused che
 
 ### M2 — Text pipeline: Style and Characters
 
-- Implement Gemini adapter, one-time source upload, structured output validation, interaction metadata, atomic step claims, and ordered Style/Characters execution.
+- Implement Gemini adapter, one-time source upload, generation-run creation, style override/blank-style branching, structured output validation, interaction metadata, atomic step claims, and ordered Style/Characters execution.
+- Keep each generation run's text chain separate while reusing the project-level source reference.
 - Add explicit running, failed, retryable, and stale state responses.
 - Evidence: mocked notebook-shaped responses produce durable style and at most 2 adult characters.
 
@@ -303,7 +371,7 @@ Each milestone is a candidate small, reviewable commit boundary with focused che
 
 ### M5 — Recovery, quality pass, and handoff
 
-- Add stale timeout/recovery, concurrent-request tests, accessibility/responsive review, error-copy pass, and server restart verification.
+- Add stale timeout/recovery, concurrent-request tests, generation-run history/select versus regenerate behavior, style-change cost confirmation, accessibility/responsive review, error-copy pass, and server restart verification.
 - Write `README.md` and `TESTING.md` with actual setup, limitations, test strategy, and report.
 - Review `DECISIONS.md` only with real human/AI trade-offs and evidence; do not back-fill invented history.
 - Evidence: complete check/build, focused frontend/backend tests, manual ugly-path checklist, clean staged diff, and honest incremental Git history.
@@ -324,7 +392,8 @@ Stop feature work and polish the core flow when all five steps, persistence, dup
 ## 13. Definition of done
 
 - The real five-step pipeline works locally with a real Gemini key.
-- The book is uploaded/referenced once and context is reused across text steps.
+- The book is uploaded/referenced once per source snapshot and context is reused across text steps within each generation run.
+- Different styles in the same project have isolated run-scoped outputs; selecting an old run does not call Gemini, while explicit regeneration does.
 - The 2-character and 1-chapter limits are enforced server-side.
 - Refresh, logout, and restart preserve completed progress and assets.
 - Duplicate execution is blocked by an atomic server-side claim.

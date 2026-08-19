@@ -28,7 +28,10 @@ function illustrationStatusClass(chapter: ChapterView): string {
   return "border-line bg-surface text-ink-muted";
 }
 
-function chapterProgressCopy(chapters: ChapterView[]): string {
+function chapterProgressCopy(
+  chapters: ChapterView[],
+  readOnly: boolean,
+): string {
   const completedCount = chapters.filter(
     (chapter) => chapter.illustration.status === "COMPLETED",
   ).length;
@@ -41,7 +44,9 @@ function chapterProgressCopy(chapters: ChapterView[]): string {
   );
 
   if (hasFailure) {
-    return `${completedCount} of ${chapters.length} saved · retry Illustrations above`;
+    return readOnly
+      ? `${completedCount} of ${chapters.length} saved · read-only history`
+      : `${completedCount} of ${chapters.length} saved · retry Illustrations above`;
   }
   if (hasRunning) return "Generating illustration";
   if (completedCount === chapters.length) {
@@ -50,7 +55,13 @@ function chapterProgressCopy(chapters: ChapterView[]): string {
   return "Chapter prompt saved";
 }
 
-export function ChapterList({ chapters }: { chapters: ChapterView[] }) {
+export function ChapterList({
+  chapters,
+  readOnly = false,
+}: {
+  chapters: ChapterView[];
+  readOnly?: boolean;
+}) {
   if (chapters.length === 0) return null;
 
   return (
@@ -65,7 +76,7 @@ export function ChapterList({ chapters }: { chapters: ChapterView[] }) {
           </h2>
         </div>
         <p aria-live="polite" className="text-xs text-ink-muted">
-          {chapterProgressCopy(chapters)}
+          {chapterProgressCopy(chapters, readOnly)}
         </p>
       </div>
 
@@ -131,11 +142,15 @@ export function ChapterList({ chapters }: { chapters: ChapterView[] }) {
                     role="alert"
                   >
                     {chapter.illustration.errorMessage ??
-                      "This illustration could not be generated. Retry Illustrations above."}
+                      (readOnly
+                        ? "This previous run is read-only. Start a new generation run to try again."
+                        : "This illustration could not be generated. Retry Illustrations above.")}
                   </p>
                 ) : chapter.illustration.isStale ? (
                   <p className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep">
-                    Recover the Illustrations run above before retrying it.
+                    {readOnly
+                      ? "This previous run is read-only. Start a new generation run to try again."
+                      : "Recover the Illustrations run above before retrying it."}
                   </p>
                 ) : null}
               </div>

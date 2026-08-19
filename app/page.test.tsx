@@ -13,7 +13,7 @@ import { IdentityForm } from "@/components/identity-form";
 import { ChapterList } from "@/components/chapter-list";
 import { ProjectDetail } from "@/components/project-detail";
 import { CharacterGrid } from "@/components/character-grid";
-import type { ProjectDetailView } from "@/domain/project";
+import type { GenerationRunView, ProjectDetailView } from "@/domain/project";
 import type { AuthenticatedUser } from "@/server/auth";
 
 vi.mock("next/navigation", () => ({
@@ -66,6 +66,30 @@ function projectFixture(): ProjectDetailView {
     style: null,
     title: "River Burrow",
     totalSteps: 5,
+  };
+}
+
+function generationRunFixture(
+  input: Partial<GenerationRunView> & Pick<GenerationRunView, "id">,
+): GenerationRunView {
+  const { id, ...overrides } = input;
+  return {
+    completedAt: null,
+    completedSteps: 0,
+    createdAt: "2026-01-01T00:00:00.000Z",
+    id,
+    imageModelId: "gemini-test-image",
+    isSelected: false,
+    isWritable: false,
+    promptVersion: "book-illustration-v1",
+    sourceSnapshotHash: "source-hash",
+    status: "COMPLETED",
+    style: "Watercolor",
+    styleRevision: "style-revision",
+    textModelId: "gemini-test-text",
+    totalSteps: 5,
+    updatedAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -170,6 +194,200 @@ describe("foundation app shell", () => {
     ).toBeInTheDocument();
     expect(screen.getAllByText("Chapters").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
+  });
+
+  it("selects a saved run without generation and renders it read-only", async () => {
+    const currentRun = generationRunFixture({
+      completedSteps: 1,
+      id: "run-current",
+      isSelected: true,
+      isWritable: true,
+      status: "ACTIVE",
+      style: "Anime",
+    });
+    const previousRun = generationRunFixture({
+      completedSteps: 2,
+      id: "run-previous",
+      style: "Watercolor",
+    });
+    const current = projectFixture();
+    current.activeGenerationRunId = currentRun.id;
+    current.completedSteps = 1;
+    current.generationRuns = [currentRun, previousRun];
+    current.selectedRunReadOnly = false;
+    current.status = "IN_PROGRESS";
+    current.style = currentRun.style;
+    current.steps[0] = { ...current.steps[0], status: "COMPLETED" };
+    const selectedPrevious = {
+      ...current,
+      activeGenerationRunId: previousRun.id,
+      generationRuns: [
+        { ...currentRun, isSelected: false, isWritable: false },
+        { ...previousRun, isSelected: true },
+      ],
+      selectedRunReadOnly: true,
+      style: previousRun.style,
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ run: previousRun }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ project: selectedPrevious }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProjectDetail project={current} user={user} />);
+    expect(
+      screen.getByText("Selecting a run does not call Gemini"),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Use previous run" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Read-only history")).toBeInTheDocument();
+    });
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/projects/project-1/generation-runs/run-previous/select",
+      { method: "POST" },
+    );
+    expect(
+      fetchMock.mock.calls.some(
+        ([url]) =>
+          String(url).includes("/steps/") ||
+          String(url).includes("/generation"),
+      ),
+    ).toBe(true);
+    expect(
+      fetchMock.mock.calls.some(([url]) => String(url).includes("/steps/")),
+    ).toBe(false);
+  });
+
+  it("does not expose retry actions for failed output in read-only history", () => {
+    const project = projectFixture();
+    project.activeGenerationRunId = "run-previous";
+    project.generationRuns = [
+      generationRunFixture({
+        id: "run-previous",
+        isSelected: true,
+        style: "Watercolor",
+      }),
+    ];
+    project.selectedRunReadOnly = true;
+    project.style = "Watercolor";
+    project.characters = [
+      {
+        id: "character-1",
+        name: "Mole",
+        position: 0,
+        prompt: "An adult mole portrait prompt.",
+        portrait: {
+          assetId: null,
+          assetUrl: null,
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: "GEMINI_FAILED",
+          errorMessage: "Portrait generation failed.",
+          heartbeatAt: "2026-01-01T00:00:00.000Z",
+          isStale: false,
+          status: "FAILED",
+        },
+      },
+    ];
+    project.chapters = [
+      {
+        id: "chapter-1",
+        name: "The River",
+        position: 0,
+        prompt: "A single river scene.",
+        illustration: {
+          assetId: null,
+          assetUrl: null,
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: "GEMINI_FAILED",
+          errorMessage: "Illustration generation failed.",
+          heartbeatAt: "2026-01-01T00:00:00.000Z",
+          isStale: false,
+          status: "FAILED",
+        },
+      },
+    ];
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(screen.getByText("Read-only history")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Retry portrait" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/retry Illustrations above/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText(/read-only history/i).length).toBeGreaterThan(0);
+  });
+
+  it("uses read-only recovery copy for stale history output", () => {
+    const project = projectFixture();
+    project.activeGenerationRunId = "run-previous";
+    project.generationRuns = [
+      generationRunFixture({
+        id: "run-previous",
+        isSelected: true,
+        style: "Watercolor",
+      }),
+    ];
+    project.selectedRunReadOnly = true;
+    project.style = "Watercolor";
+    project.characters = [
+      {
+        id: "character-1",
+        name: "Mole",
+        position: 0,
+        prompt: "An adult mole portrait prompt.",
+        portrait: {
+          assetId: null,
+          assetUrl: null,
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: "STALE_RUN",
+          errorMessage: null,
+          heartbeatAt: "2026-01-01T00:00:00.000Z",
+          isStale: true,
+          status: "RUNNING",
+        },
+      },
+    ];
+    project.chapters = [
+      {
+        id: "chapter-1",
+        name: "The River",
+        position: 0,
+        prompt: "A single river scene.",
+        illustration: {
+          assetId: null,
+          assetUrl: null,
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: "GEMINI_FAILED",
+          errorMessage: null,
+          heartbeatAt: "2026-01-01T00:00:00.000Z",
+          isStale: false,
+          status: "FAILED",
+        },
+      },
+    ];
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(
+      screen.queryByText(/Recover the Portraits run above/i),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Retry Illustrations above/i),
+    ).not.toBeInTheDocument();
+    expect(screen.getAllByText(/start a new generation run/i).length).toBe(3);
   });
 
   it("renders a saved portrait beside a retryable partial failure", () => {

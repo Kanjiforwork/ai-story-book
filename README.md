@@ -59,14 +59,16 @@ npm run build
 
 - Next.js App Router provides pages and server routes.
 - React components render the project workspace and poll the server for the latest persisted view while a step runs.
-- SQLite stores users, projects, ordered step state, run claims, item progress, and Gemini interaction metadata.
+- SQLite stores users, projects, generation runs, run-scoped ordered step state, run claims, item progress, and Gemini interaction metadata.
 - The local filesystem stores book text and generated image bytes. Assets are served through an ownership-checked API route rather than exposing filesystem paths.
 - Gemini access is server-only and is isolated behind adapters so tests can use deterministic mocks.
-- Each step requires an explicit user action and an atomic server-side run claim. The persisted run ID and heartbeat prevent duplicate work and allow stale-run recovery.
+- Each step requires an explicit user action and an atomic server-side claim scoped to the selected generation run. The persisted run ID and heartbeat prevent duplicate work and allow stale-run recovery.
 
 ## Persistence and recovery
 
-Completed results are written as soon as they are available. Portrait and illustration items therefore retain successful assets when a later item fails. A failed step can be retried explicitly; a stale running step can be recovered explicitly and then started as a new run. Upstream style, character, portrait, and chapter results remain persisted during downstream retries.
+Completed results are written as soon as they are available. Portrait and illustration items therefore retain successful assets when a later item fails. A failed step can be retried explicitly; a stale running step can be recovered explicitly and then retried as a new step attempt in the same generation run. Upstream style, character, portrait, and chapter results remain persisted during downstream retries.
+
+The source book is uploaded to Gemini lazily on the first text-generation call and its reusable file reference is stored at project scope. Each generation run stores its source snapshot, exact style or style revision, prompt/model metadata, text interaction chain, and generated characters, chapters, interactions, and assets. Selecting a previous run reads its persisted output without calling Gemini; `Regenerate` creates a new isolated run while reusing the project source reference.
 
 The server enforces the assessment limits of at most two adult characters and one chapter, checks project ownership on project and asset operations, and rejects unsafe asset paths or missing backing files.
 

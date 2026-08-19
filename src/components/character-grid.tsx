@@ -26,11 +26,13 @@ function portraitStatusClass(character: CharacterView): string {
 export function CharacterGrid({
   characters,
   onRetry,
+  readOnly = false,
   retryDisabled = false,
   retryingCharacterId,
 }: {
   characters: CharacterView[];
   onRetry?: (characterId: string) => void;
+  readOnly?: boolean;
   retryDisabled?: boolean;
   retryingCharacterId?: string | null;
 }) {
@@ -57,9 +59,11 @@ export function CharacterGrid({
           </h2>
         </div>
         <p aria-live="polite" className="text-xs text-ink-muted">
-          {hasFailure
+          {hasFailure && !readOnly
             ? `${completedCount} of ${characters.length} saved · retry failed items`
-            : `${completedCount} of ${characters.length} portraits saved`}
+            : hasFailure
+              ? `${completedCount} of ${characters.length} saved · read-only history`
+              : `${completedCount} of ${characters.length} portraits saved`}
         </p>
       </div>
       <div className="grid gap-4 md:grid-cols-2">
@@ -131,7 +135,7 @@ export function CharacterGrid({
                       {character.portrait.errorMessage ??
                         "This portrait could not be generated."}
                     </p>
-                    {onRetry ? (
+                    {onRetry && !readOnly ? (
                       <button
                         className="mt-3 inline-flex min-h-11 items-center rounded-xl bg-orange px-4 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-orange-hover disabled:cursor-wait disabled:opacity-60"
                         disabled={retrying || retryDisabled}
@@ -144,7 +148,9 @@ export function CharacterGrid({
                   </div>
                 ) : stale ? (
                   <p className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep">
-                    Recover the Portraits run above before retrying this item.
+                    {readOnly
+                      ? "This previous run is read-only. Start a new generation run to try again."
+                      : "Recover the Portraits run above before retrying this item."}
                   </p>
                 ) : null}
               </div>

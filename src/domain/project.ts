@@ -30,10 +30,37 @@ export type IllustrationItemStatus =
 
 export type ProjectStatus = "DRAFT" | "IN_PROGRESS" | "DONE";
 
+export const GENERATION_RUN_STATUSES = [
+  "ACTIVE",
+  "SUPERSEDED",
+  "COMPLETED",
+] as const;
+
+export type GenerationRunStatus = (typeof GENERATION_RUN_STATUSES)[number];
+
+export type GenerationRunView = {
+  id: string;
+  sourceSnapshotHash: string;
+  style: string | null;
+  styleRevision: string | null;
+  promptVersion: string;
+  textModelId: string | null;
+  imageModelId: string | null;
+  status: GenerationRunStatus;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  completedSteps: number;
+  totalSteps: number;
+  isSelected: boolean;
+  isWritable: boolean;
+};
+
 export type ProjectStepView = {
   key: PipelineStep;
   position: number;
   status: ProjectStepStatus;
+  generationRunId?: string;
   run: ProjectStepRunView;
 };
 
@@ -93,6 +120,7 @@ export type ProjectSummary = {
   status: ProjectStatus;
   completedSteps: number;
   totalSteps: number;
+  activeGenerationRunId?: string;
 };
 
 export type ProjectDetailView = ProjectSummary & {
@@ -101,4 +129,7 @@ export type ProjectDetailView = ProjectSummary & {
   chapters: ChapterView[];
   style: string | null;
   steps: ProjectStepView[];
+  activeGenerationRunId?: string;
+  selectedRunReadOnly?: boolean;
+  generationRuns?: GenerationRunView[];
 };

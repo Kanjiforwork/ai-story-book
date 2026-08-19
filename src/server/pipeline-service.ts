@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import crypto, { randomUUID } from "node:crypto";
 import fs from "node:fs";
 
 import type Database from "better-sqlite3";
@@ -7,7 +7,6 @@ import {
   assertPipelineCaps,
   isImplementedPipelineStep,
   previousPipelineStep,
-  type PipelineErrorCode,
   type PipelineStep,
 } from "@/domain/pipeline";
 import { normalizeOptionalStyle } from "@/domain/validation";
@@ -37,32 +36,22 @@ import {
 } from "@/server/asset-service";
 import type { PortraitReference } from "@/server/gemini-image";
 import { openDatabase } from "@/server/storage";
+import { PipelineStateError } from "@/server/pipeline-errors";
+import { getActiveGenerationRunId } from "@/server/generation-run-service";
 
-type PipelineStateCode =
-  | PipelineErrorCode
-  | "ASSET_WRITE_FAILED"
-  | "NOT_FOUND"
-  | "PORTRAIT_PARTIAL_FAILURE";
-
-export class PipelineStateError extends Error {
-  constructor(
-    public readonly code: PipelineStateCode,
-    message: string,
-  ) {
-    super(message);
-    this.name = "PipelineStateError";
-  }
-}
+export { PipelineStateError } from "@/server/pipeline-errors";
 
 export type StepClaim = {
   attempt: number;
   claimedAt: string;
+  generationRunId: string;
   projectId: string;
   runId: string;
   step: PipelineStep;
 };
 
 type StepExecutionRow = {
+  generation_run_id: string;
   active_run_id: string | null;
   attempt_count: number;
   book_text_key: string;
@@ -90,12 +79,14 @@ function getStepRow(
   userId: string,
   projectId: string,
   step: PipelineStep,
+  generationRunId: string,
 ): StepExecutionRow | undefined {
   return database
     .prepare(
       `
         SELECT
           ps.active_run_id,
+          ps.generation_run_id,
           ps.attempt_count,
           ps.position,
           ps.status,
@@ -105,10 +96,12 @@ function getStepRow(
           p.gemini_context_interaction_id
         FROM project_steps ps
         INNER JOIN projects p ON p.id = ps.project_id
-        WHERE ps.project_id = ? AND ps.step_key = ? AND p.user_id = ?
+        WHERE ps.project_id = ? AND ps.step_key = ?
+          AND ps.generation_run_id = ? AND p.user_id = ?
       `,
     )
-    .get(projectId, step, userId) as StepExecutionRow | undefined;
+    .get(projectId, step, generationRunId, userId) as
+    StepExecutionRow | undefined;
 }
 
 function assertFreshRun(
@@ -133,6 +126,7 @@ function assertFreshRun(
 function selectPortraitItems(
   database: Database.Database,
   projectId: string,
+  generationRunId: string,
   characterId?: string,
 ): PortraitSelectionRow[] {
   const rows = database
@@ -140,11 +134,11 @@ function selectPortraitItems(
       `
         SELECT id, portrait_active_run_id, portrait_status
         FROM characters
-        WHERE project_id = ?
+        WHERE project_id = ? AND generation_run_id = ?
         ORDER BY position ASC
       `,
     )
-    .all(projectId) as PortraitSelectionRow[];
+    .all(projectId, generationRunId) as PortraitSelectionRow[];
 
   try {
     assertPipelineCaps({ adultCharacterCount: rows.length, chapterCount: 0 });
@@ -193,17 +187,18 @@ function selectPortraitItems(
 function selectIllustrationItems(
   database: Database.Database,
   projectId: string,
+  generationRunId: string,
 ): IllustrationSelectionRow[] {
   const rows = database
     .prepare(
       `
         SELECT id, illustration_active_run_id, illustration_status
         FROM chapters
-        WHERE project_id = ?
+        WHERE project_id = ? AND generation_run_id = ?
         ORDER BY position ASC
       `,
     )
-    .all(projectId) as IllustrationSelectionRow[];
+    .all(projectId, generationRunId) as IllustrationSelectionRow[];
 
   try {
     assertPipelineCaps({ adultCharacterCount: 0, chapterCount: rows.length });
@@ -243,6 +238,7 @@ function selectIllustrationItems(
 export function claimPipelineStep(
   database: Database.Database,
   input: {
+    generationRunId?: string;
     projectId: string;
     step: PipelineStep;
     userId: string;
@@ -258,7 +254,18 @@ export function claimPipelineStep(
       );
     }
 
-    const row = getStepRow(database, input.userId, input.projectId, input.step);
+    const generationRunId = getActiveGenerationRunId(database, {
+      projectId: input.projectId,
+      requestedRunId: input.generationRunId,
+      userId: input.userId,
+    });
+    const row = getStepRow(
+      database,
+      input.userId,
+      input.projectId,
+      input.step,
+      generationRunId,
+    );
     if (!row) {
       throw new PipelineStateError("NOT_FOUND", "Project step not found.");
     }
@@ -273,9 +280,9 @@ export function claimPipelineStep(
     if (row.status === "RUNNING") {
       const heartbeat = database
         .prepare(
-          "SELECT heartbeat_at FROM project_steps WHERE project_id = ? AND step_key = ?",
+          "SELECT heartbeat_at FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ?",
         )
-        .get(input.projectId, input.step) as
+        .get(input.projectId, generationRunId, input.step) as
         { heartbeat_at: string | null } | undefined;
       assertFreshRun(row, heartbeat?.heartbeat_at ?? null, input.staleRunMs);
     }
@@ -284,9 +291,9 @@ export function claimPipelineStep(
     if (previousStep) {
       const previous = database
         .prepare(
-          "SELECT status FROM project_steps WHERE project_id = ? AND step_key = ?",
+          "SELECT status FROM project_steps WHERE generation_run_id = ? AND step_key = ?",
         )
-        .get(input.projectId, previousStep) as { status: string } | undefined;
+        .get(generationRunId, previousStep) as { status: string } | undefined;
       if (previous?.status !== "COMPLETED") {
         throw new PipelineStateError(
           "STEP_ORDER",
@@ -300,12 +307,13 @@ export function claimPipelineStep(
         ? selectPortraitItems(
             database,
             input.projectId,
+            generationRunId,
             input.portraitCharacterId,
           )
         : [];
     const illustrationItems =
       input.step === "ILLUSTRATIONS"
-        ? selectIllustrationItems(database, input.projectId)
+        ? selectIllustrationItems(database, input.projectId, generationRunId)
         : [];
 
     const now = new Date().toISOString();
@@ -316,11 +324,19 @@ export function claimPipelineStep(
       .prepare(
         `
           INSERT INTO pipeline_runs
-            (id, project_id, step_key, attempt, status, claimed_at, heartbeat_at)
-          VALUES (?, ?, ?, ?, 'RUNNING', ?, ?)
+            (id, project_id, generation_run_id, step_key, attempt, status, claimed_at, heartbeat_at)
+          VALUES (?, ?, ?, ?, ?, 'RUNNING', ?, ?)
         `,
       )
-      .run(runId, input.projectId, input.step, attempt, now, now);
+      .run(
+        runId,
+        input.projectId,
+        generationRunId,
+        input.step,
+        attempt,
+        now,
+        now,
+      );
     database
       .prepare(
         `
@@ -333,10 +349,19 @@ export function claimPipelineStep(
               error_code = NULL,
               error_message = NULL,
               updated_at = ?
-          WHERE project_id = ? AND step_key = ?
+          WHERE project_id = ? AND generation_run_id = ? AND step_key = ?
         `,
       )
-      .run(runId, attempt, now, now, now, input.projectId, input.step);
+      .run(
+        runId,
+        attempt,
+        now,
+        now,
+        now,
+        input.projectId,
+        generationRunId,
+        input.step,
+      );
 
     if (input.step === "PORTRAITS") {
       const updatePortrait = database.prepare(
@@ -350,11 +375,19 @@ export function claimPipelineStep(
               portrait_error_code = NULL,
               portrait_error_message = NULL,
               updated_at = ?
-          WHERE project_id = ? AND id = ?
+          WHERE project_id = ? AND generation_run_id = ? AND id = ?
         `,
       );
       portraitItems.forEach((item) => {
-        updatePortrait.run(runId, now, now, now, input.projectId, item.id);
+        updatePortrait.run(
+          runId,
+          now,
+          now,
+          now,
+          input.projectId,
+          generationRunId,
+          item.id,
+        );
       });
     }
     if (input.step === "ILLUSTRATIONS") {
@@ -369,17 +402,26 @@ export function claimPipelineStep(
               illustration_error_code = NULL,
               illustration_error_message = NULL,
               updated_at = ?
-          WHERE project_id = ? AND id = ?
+          WHERE project_id = ? AND generation_run_id = ? AND id = ?
         `,
       );
       illustrationItems.forEach((item) => {
-        updateIllustration.run(runId, now, now, now, input.projectId, item.id);
+        updateIllustration.run(
+          runId,
+          now,
+          now,
+          now,
+          input.projectId,
+          generationRunId,
+          item.id,
+        );
       });
     }
 
     return {
       attempt,
       claimedAt: now,
+      generationRunId,
       projectId: input.projectId,
       runId,
       step: input.step,
@@ -390,6 +432,7 @@ export function claimPipelineStep(
 export function recoverStalePipelineStep(
   database: Database.Database,
   input: {
+    generationRunId?: string;
     projectId: string;
     step: PipelineStep;
     userId: string;
@@ -404,7 +447,18 @@ export function recoverStalePipelineStep(
       );
     }
 
-    const row = getStepRow(database, input.userId, input.projectId, input.step);
+    const generationRunId = getActiveGenerationRunId(database, {
+      projectId: input.projectId,
+      requestedRunId: input.generationRunId,
+      userId: input.userId,
+    });
+    const row = getStepRow(
+      database,
+      input.userId,
+      input.projectId,
+      input.step,
+      generationRunId,
+    );
     if (!row) {
       throw new PipelineStateError("NOT_FOUND", "Project step not found.");
     }
@@ -417,9 +471,11 @@ export function recoverStalePipelineStep(
 
     const heartbeat = database
       .prepare(
-        "SELECT heartbeat_at FROM project_steps WHERE project_id = ? AND step_key = ?",
+        "SELECT heartbeat_at FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ?",
       )
-      .get(input.projectId, input.step) as { heartbeat_at: string | null };
+      .get(input.projectId, generationRunId, input.step) as {
+      heartbeat_at: string | null;
+    };
     const heartbeatTime = heartbeat.heartbeat_at
       ? Date.parse(heartbeat.heartbeat_at)
       : Number.NaN;
@@ -443,10 +499,16 @@ export function recoverStalePipelineStep(
               error_code = 'STALE_RUN',
               error_message = 'The previous run stopped responding. Retry this step.',
               updated_at = ?
-          WHERE project_id = ? AND step_key = ? AND active_run_id = ?
+          WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ?
         `,
       )
-      .run(now, input.projectId, input.step, row.active_run_id);
+      .run(
+        now,
+        input.projectId,
+        generationRunId,
+        input.step,
+        row.active_run_id,
+      );
     if (input.step === "PORTRAITS") {
       database
         .prepare(
@@ -457,10 +519,11 @@ export function recoverStalePipelineStep(
                 portrait_error_code = 'STALE_RUN',
                 portrait_error_message = 'The previous run stopped responding. Retry this portrait.',
                 updated_at = ?
-            WHERE project_id = ? AND portrait_active_run_id = ?
+            WHERE project_id = ? AND generation_run_id = ?
+              AND portrait_active_run_id = ?
           `,
         )
-        .run(now, input.projectId, row.active_run_id);
+        .run(now, input.projectId, generationRunId, row.active_run_id);
     }
     if (input.step === "ILLUSTRATIONS") {
       database
@@ -472,10 +535,11 @@ export function recoverStalePipelineStep(
                 illustration_error_code = 'STALE_RUN',
                 illustration_error_message = 'The previous run stopped responding. Retry this illustration.',
                 updated_at = ?
-            WHERE project_id = ? AND illustration_active_run_id = ?
+            WHERE project_id = ? AND generation_run_id = ?
+              AND illustration_active_run_id = ?
           `,
         )
-        .run(now, input.projectId, row.active_run_id);
+        .run(now, input.projectId, generationRunId, row.active_run_id);
     }
     database
       .prepare(
@@ -499,10 +563,17 @@ function heartbeatPipelineRun(dataDir: string, claim: StepClaim): void {
         `
           UPDATE project_steps
           SET heartbeat_at = ?, updated_at = ?
-          WHERE project_id = ? AND step_key = ? AND active_run_id = ?
+          WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ?
         `,
       )
-      .run(now, now, claim.projectId, claim.step, claim.runId);
+      .run(
+        now,
+        now,
+        claim.projectId,
+        claim.generationRunId,
+        claim.step,
+        claim.runId,
+      );
     database
       .prepare(
         "UPDATE pipeline_runs SET heartbeat_at = ? WHERE id = ? AND status = 'RUNNING'",
@@ -514,10 +585,10 @@ function heartbeatPipelineRun(dataDir: string, claim: StepClaim): void {
           `
             UPDATE characters
             SET portrait_heartbeat_at = ?, updated_at = ?
-            WHERE project_id = ? AND portrait_active_run_id = ? AND portrait_status = 'RUNNING'
+            WHERE project_id = ? AND generation_run_id = ? AND portrait_active_run_id = ? AND portrait_status = 'RUNNING'
           `,
         )
-        .run(now, now, claim.projectId, claim.runId);
+        .run(now, now, claim.projectId, claim.generationRunId, claim.runId);
     }
     if (claim.step === "ILLUSTRATIONS") {
       database
@@ -525,11 +596,11 @@ function heartbeatPipelineRun(dataDir: string, claim: StepClaim): void {
           `
             UPDATE chapters
             SET illustration_heartbeat_at = ?, updated_at = ?
-            WHERE project_id = ? AND illustration_active_run_id = ?
+            WHERE project_id = ? AND generation_run_id = ? AND illustration_active_run_id = ?
               AND illustration_status = 'RUNNING'
           `,
         )
-        .run(now, now, claim.projectId, claim.runId);
+        .run(now, now, claim.projectId, claim.generationRunId, claim.runId);
     }
   });
 }
@@ -560,9 +631,9 @@ function assertPipelineRunActive(dataDir: string, claim: StepClaim): void {
   const active = withDatabaseAt(dataDir, (database) =>
     database
       .prepare(
-        "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+        "SELECT 1 FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
       )
-      .get(claim.projectId, claim.step, claim.runId),
+      .get(claim.projectId, claim.generationRunId, claim.step, claim.runId),
   );
   if (!active) {
     throw new PipelineStateError(
@@ -586,9 +657,9 @@ function persistGeminiContext(
     database.transaction(() => {
       const active = database
         .prepare(
-          "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+          "SELECT 1 FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
         )
-        .get(claim.projectId, claim.step, claim.runId);
+        .get(claim.projectId, claim.generationRunId, claim.step, claim.runId);
       if (!active) return;
       const now = new Date().toISOString();
       database
@@ -597,29 +668,33 @@ function persistGeminiContext(
             UPDATE projects
             SET gemini_file_name = ?,
                 gemini_file_uri = ?,
-                gemini_context_interaction_id = ?,
                 updated_at = ?
             WHERE id = ?
           `,
         )
+        .run(input.fileName, input.fileUri, now, claim.projectId);
+      database
+        .prepare(
+          "UPDATE generation_runs SET root_interaction_id = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+        )
         .run(
-          input.fileName,
-          input.fileUri,
           input.contextInteractionId,
           now,
+          claim.generationRunId,
           claim.projectId,
         );
       database
         .prepare(
           `
             INSERT INTO gemini_interactions
-              (id, project_id, step_key, interaction_id, model_id, created_at)
-            VALUES (?, ?, 'SOURCE', ?, ?, ?)
+              (id, project_id, generation_run_id, step_key, interaction_id, model_id, created_at)
+            VALUES (?, ?, ?, 'SOURCE', ?, ?, ?)
           `,
         )
         .run(
           randomUUID(),
           claim.projectId,
+          claim.generationRunId,
           input.contextInteractionId,
           input.modelId,
           now,
@@ -641,7 +716,8 @@ function persistGeminiFile(
           SET gemini_file_name = ?, gemini_file_uri = ?, updated_at = ?
           WHERE id = ? AND EXISTS (
             SELECT 1 FROM project_steps
-            WHERE project_id = projects.id AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'
+            WHERE project_id = projects.id AND generation_run_id = ?
+              AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'
           )
         `,
       )
@@ -650,6 +726,7 @@ function persistGeminiFile(
         input.fileUri,
         new Date().toISOString(),
         claim.projectId,
+        claim.generationRunId,
         claim.step,
         claim.runId,
       );
@@ -670,9 +747,9 @@ function persistStyleResult(
     database.transaction(() => {
       const active = database
         .prepare(
-          "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+          "SELECT 1 FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
         )
-        .get(claim.projectId, claim.step, claim.runId);
+        .get(claim.projectId, claim.generationRunId, claim.step, claim.runId);
       if (!active) return;
       const now = new Date().toISOString();
       database
@@ -682,21 +759,68 @@ function persistStyleResult(
         .run(input.style, now, claim.projectId);
       database
         .prepare(
+          "UPDATE generation_runs SET style_text = ?, style_revision = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+        )
+        .run(
+          input.style,
+          crypto.createHash("sha256").update(input.style).digest("hex"),
+          now,
+          claim.generationRunId,
+          claim.projectId,
+        );
+      database
+        .prepare(
           `
             INSERT INTO gemini_interactions
-              (id, project_id, step_key, interaction_id, model_id, previous_interaction_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+              (id, project_id, generation_run_id, step_key, interaction_id, model_id, previous_interaction_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
           randomUUID(),
           claim.projectId,
+          claim.generationRunId,
           claim.step,
           input.interactionId,
           input.modelId,
           input.previousId,
           now,
         );
+      completePipelineRun(database, claim, now);
+    })();
+  });
+}
+
+function persistDirectStyleResult(
+  dataDir: string,
+  claim: StepClaim,
+  style: string,
+): void {
+  withDatabaseAt(dataDir, (database) => {
+    database.transaction(() => {
+      const active = database
+        .prepare(
+          "SELECT 1 FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+        )
+        .get(claim.projectId, claim.generationRunId, claim.step, claim.runId);
+      if (!active) return;
+      const now = new Date().toISOString();
+      database
+        .prepare(
+          "UPDATE generation_runs SET style_text = ?, style_revision = ?, updated_at = ? WHERE id = ? AND project_id = ?",
+        )
+        .run(
+          style,
+          crypto.createHash("sha256").update(style).digest("hex"),
+          now,
+          claim.generationRunId,
+          claim.projectId,
+        );
+      database
+        .prepare(
+          "UPDATE projects SET style_text = ?, updated_at = ? WHERE id = ?",
+        )
+        .run(style, now, claim.projectId);
       completePipelineRun(database, claim, now);
     })();
   });
@@ -716,9 +840,9 @@ function persistCharacterResult(
     database.transaction(() => {
       const active = database
         .prepare(
-          "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+          "SELECT 1 FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
         )
-        .get(claim.projectId, claim.step, claim.runId);
+        .get(claim.projectId, claim.generationRunId, claim.step, claim.runId);
       if (!active) return;
       const now = new Date().toISOString();
       input.characters.forEach((character, position) => {
@@ -726,13 +850,14 @@ function persistCharacterResult(
           .prepare(
             `
               INSERT INTO characters
-                (id, project_id, position, name, prompt, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, project_id, generation_run_id, position, name, prompt, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `,
           )
           .run(
             randomUUID(),
             claim.projectId,
+            claim.generationRunId,
             position,
             character.name,
             character.prompt,
@@ -744,13 +869,14 @@ function persistCharacterResult(
         .prepare(
           `
             INSERT INTO gemini_interactions
-              (id, project_id, step_key, interaction_id, model_id, previous_interaction_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+              (id, project_id, generation_run_id, step_key, interaction_id, model_id, previous_interaction_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
           randomUUID(),
           claim.projectId,
+          claim.generationRunId,
           claim.step,
           input.interactionId,
           input.modelId,
@@ -776,9 +902,9 @@ function persistChapterResult(
     database.transaction(() => {
       const active = database
         .prepare(
-          "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+          "SELECT 1 FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
         )
-        .get(claim.projectId, claim.step, claim.runId);
+        .get(claim.projectId, claim.generationRunId, claim.step, claim.runId);
       if (!active) return;
       const now = new Date().toISOString();
       input.chapters.forEach((chapter, position) => {
@@ -786,13 +912,14 @@ function persistChapterResult(
           .prepare(
             `
               INSERT INTO chapters
-                (id, project_id, position, name, prompt, created_at, updated_at)
-              VALUES (?, ?, ?, ?, ?, ?, ?)
+                (id, project_id, generation_run_id, position, name, prompt, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `,
           )
           .run(
             randomUUID(),
             claim.projectId,
+            claim.generationRunId,
             position,
             chapter.name,
             chapter.prompt,
@@ -804,13 +931,14 @@ function persistChapterResult(
         .prepare(
           `
             INSERT INTO gemini_interactions
-              (id, project_id, step_key, interaction_id, model_id, previous_interaction_id, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+              (id, project_id, generation_run_id, step_key, interaction_id, model_id, previous_interaction_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
           randomUUID(),
           claim.projectId,
+          claim.generationRunId,
           claim.step,
           input.interactionId,
           input.modelId,
@@ -836,16 +964,24 @@ function persistPortraitSuccess(
             SELECT 1
             FROM characters c
             INNER JOIN project_steps ps ON ps.project_id = c.project_id
+              AND ps.generation_run_id = c.generation_run_id
               AND ps.step_key = 'PORTRAITS'
             WHERE c.project_id = ?
               AND c.id = ?
+              AND c.generation_run_id = ?
               AND c.portrait_active_run_id = ?
               AND c.portrait_status = 'RUNNING'
               AND ps.active_run_id = ?
               AND ps.status = 'RUNNING'
           `,
         )
-        .get(claim.projectId, characterId, claim.runId, claim.runId);
+        .get(
+          claim.projectId,
+          characterId,
+          claim.generationRunId,
+          claim.runId,
+          claim.runId,
+        );
       if (!active) return false;
 
       const now = new Date().toISOString();
@@ -853,13 +989,14 @@ function persistPortraitSuccess(
         .prepare(
           `
             INSERT INTO assets
-              (id, project_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
-            VALUES (?, ?, 'PORTRAIT', ?, ?, ?, ?, ?, ?)
+              (id, project_id, generation_run_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
+            VALUES (?, ?, ?, 'PORTRAIT', ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
           asset.id,
           claim.projectId,
+          claim.generationRunId,
           asset.storageKey,
           asset.mimeType,
           asset.byteSize,
@@ -878,10 +1015,18 @@ function persistPortraitSuccess(
                 portrait_error_message = NULL,
                 portrait_asset_id = ?,
                 updated_at = ?
-            WHERE project_id = ? AND id = ? AND portrait_active_run_id = ?
+            WHERE project_id = ? AND generation_run_id = ? AND id = ? AND portrait_active_run_id = ?
           `,
         )
-        .run(now, asset.id, now, claim.projectId, characterId, claim.runId);
+        .run(
+          now,
+          asset.id,
+          now,
+          claim.projectId,
+          claim.generationRunId,
+          characterId,
+          claim.runId,
+        );
       if (result.changes !== 1) {
         throw new PipelineStateError(
           "STALE_RUN",
@@ -919,7 +1064,7 @@ function persistPortraitFailure(
               portrait_error_code = ?,
               portrait_error_message = ?,
               updated_at = ?
-          WHERE project_id = ? AND id = ? AND portrait_active_run_id = ?
+          WHERE project_id = ? AND generation_run_id = ? AND id = ? AND portrait_active_run_id = ?
         `,
       )
       .run(
@@ -928,6 +1073,7 @@ function persistPortraitFailure(
         message,
         new Date().toISOString(),
         claim.projectId,
+        claim.generationRunId,
         characterId,
         claim.runId,
       );
@@ -948,16 +1094,24 @@ function persistIllustrationSuccess(
             SELECT 1
             FROM chapters ch
             INNER JOIN project_steps ps ON ps.project_id = ch.project_id
+              AND ps.generation_run_id = ch.generation_run_id
               AND ps.step_key = 'ILLUSTRATIONS'
             WHERE ch.project_id = ?
               AND ch.id = ?
+              AND ch.generation_run_id = ?
               AND ch.illustration_active_run_id = ?
               AND ch.illustration_status = 'RUNNING'
               AND ps.active_run_id = ?
               AND ps.status = 'RUNNING'
           `,
         )
-        .get(claim.projectId, chapterId, claim.runId, claim.runId);
+        .get(
+          claim.projectId,
+          chapterId,
+          claim.generationRunId,
+          claim.runId,
+          claim.runId,
+        );
       if (!active) return false;
 
       const now = new Date().toISOString();
@@ -965,13 +1119,14 @@ function persistIllustrationSuccess(
         .prepare(
           `
             INSERT INTO assets
-              (id, project_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
-            VALUES (?, ?, 'ILLUSTRATION', ?, ?, ?, ?, ?, ?)
+              (id, project_id, generation_run_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
+            VALUES (?, ?, ?, 'ILLUSTRATION', ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
           asset.id,
           claim.projectId,
+          claim.generationRunId,
           asset.storageKey,
           asset.mimeType,
           asset.byteSize,
@@ -990,10 +1145,18 @@ function persistIllustrationSuccess(
                 illustration_error_message = NULL,
                 illustration_asset_id = ?,
                 updated_at = ?
-            WHERE project_id = ? AND id = ? AND illustration_active_run_id = ?
+            WHERE project_id = ? AND generation_run_id = ? AND id = ? AND illustration_active_run_id = ?
           `,
         )
-        .run(now, asset.id, now, claim.projectId, chapterId, claim.runId);
+        .run(
+          now,
+          asset.id,
+          now,
+          claim.projectId,
+          claim.generationRunId,
+          chapterId,
+          claim.runId,
+        );
       if (result.changes !== 1) {
         throw new PipelineStateError(
           "STALE_RUN",
@@ -1031,7 +1194,7 @@ function persistIllustrationFailure(
               illustration_error_code = ?,
               illustration_error_message = ?,
               updated_at = ?
-          WHERE project_id = ? AND id = ? AND illustration_active_run_id = ?
+          WHERE project_id = ? AND generation_run_id = ? AND id = ? AND illustration_active_run_id = ?
         `,
       )
       .run(
@@ -1040,6 +1203,7 @@ function persistIllustrationFailure(
         message,
         new Date().toISOString(),
         claim.projectId,
+        claim.generationRunId,
         chapterId,
         claim.runId,
       );
@@ -1058,14 +1222,14 @@ function getPortraitRunInput(
     const project = database
       .prepare(
         `
-          SELECT style_text
-          FROM projects p
-          INNER JOIN project_steps ps ON ps.project_id = p.id
-          WHERE p.id = ? AND ps.step_key = 'PORTRAITS'
+          SELECT gr.style_text
+          FROM generation_runs gr
+          INNER JOIN project_steps ps ON ps.generation_run_id = gr.id
+          WHERE gr.project_id = ? AND gr.id = ? AND ps.step_key = 'PORTRAITS'
             AND ps.active_run_id = ? AND ps.status = 'RUNNING'
         `,
       )
-      .get(claim.projectId, claim.runId) as
+      .get(claim.projectId, claim.generationRunId, claim.runId) as
       { style_text: string | null } | undefined;
     if (!project?.style_text) {
       throw new PipelineStateError(
@@ -1079,7 +1243,7 @@ function getPortraitRunInput(
         `
           SELECT id, name, prompt
           FROM characters
-          WHERE project_id = ?
+          WHERE project_id = ? AND generation_run_id = ?
             AND portrait_active_run_id = ?
             AND portrait_status = 'RUNNING'
             ${characterId ? "AND id = ?" : ""}
@@ -1088,8 +1252,8 @@ function getPortraitRunInput(
       )
       .all(
         ...(characterId
-          ? [claim.projectId, claim.runId, characterId]
-          : [claim.projectId, claim.runId]),
+          ? [claim.projectId, claim.generationRunId, claim.runId, characterId]
+          : [claim.projectId, claim.generationRunId, claim.runId]),
       ) as Array<{ id: string; name: string; prompt: string }>;
     if (characters.length === 0) {
       throw new PipelineStateError(
@@ -1117,14 +1281,14 @@ function getChapterRunInput(
     const project = database
       .prepare(
         `
-          SELECT p.style_text
-          FROM projects p
-          INNER JOIN project_steps ps ON ps.project_id = p.id
-          WHERE p.id = ? AND ps.step_key = 'CHAPTERS'
+          SELECT gr.style_text
+          FROM generation_runs gr
+          INNER JOIN project_steps ps ON ps.generation_run_id = gr.id
+          WHERE gr.project_id = ? AND gr.id = ? AND ps.step_key = 'CHAPTERS'
             AND ps.active_run_id = ? AND ps.status = 'RUNNING'
         `,
       )
-      .get(claim.projectId, claim.runId) as
+      .get(claim.projectId, claim.generationRunId, claim.runId) as
       { style_text: string | null } | undefined;
     if (!project?.style_text) {
       throw new PipelineStateError(
@@ -1139,12 +1303,12 @@ function getChapterRunInput(
           SELECT c.name, c.prompt, c.portrait_asset_id, a.mime_type
           FROM characters c
           LEFT JOIN assets a ON a.id = c.portrait_asset_id
-          WHERE c.project_id = ?
+          WHERE c.project_id = ? AND c.generation_run_id = ?
             AND c.portrait_status = 'COMPLETED'
           ORDER BY c.position ASC
         `,
       )
-      .all(claim.projectId) as Array<{
+      .all(claim.projectId, claim.generationRunId) as Array<{
       name: string;
       prompt: string;
       portrait_asset_id: string | null;
@@ -1224,14 +1388,14 @@ function getIllustrationRunInput(
     const project = database
       .prepare(
         `
-          SELECT p.style_text
-          FROM projects p
-          INNER JOIN project_steps ps ON ps.project_id = p.id
-          WHERE p.id = ? AND ps.step_key = 'ILLUSTRATIONS'
+          SELECT gr.style_text
+          FROM generation_runs gr
+          INNER JOIN project_steps ps ON ps.generation_run_id = gr.id
+          WHERE gr.project_id = ? AND gr.id = ? AND ps.step_key = 'ILLUSTRATIONS'
             AND ps.active_run_id = ? AND ps.status = 'RUNNING'
         `,
       )
-      .get(claim.projectId, claim.runId) as
+      .get(claim.projectId, claim.generationRunId, claim.runId) as
       { style_text: string | null } | undefined;
     if (!project?.style_text) {
       throw new PipelineStateError(
@@ -1245,14 +1409,14 @@ function getIllustrationRunInput(
         `
           SELECT id, name, prompt
           FROM chapters
-          WHERE project_id = ?
+          WHERE project_id = ? AND generation_run_id = ?
             AND illustration_active_run_id = ?
             AND illustration_status = 'RUNNING'
           ORDER BY position ASC
           LIMIT 1
         `,
       )
-      .get(claim.projectId, claim.runId) as
+      .get(claim.projectId, claim.generationRunId, claim.runId) as
       { id: string; name: string; prompt: string } | undefined;
     if (!chapter) {
       throw new PipelineStateError(
@@ -1267,11 +1431,11 @@ function getIllustrationRunInput(
           SELECT c.name, c.prompt, c.portrait_asset_id, a.mime_type
           FROM characters c
           LEFT JOIN assets a ON a.id = c.portrait_asset_id
-          WHERE c.project_id = ? AND c.portrait_status = 'COMPLETED'
+          WHERE c.project_id = ? AND c.generation_run_id = ? AND c.portrait_status = 'COMPLETED'
           ORDER BY c.position ASC
         `,
       )
-      .all(claim.projectId) as Array<{
+      .all(claim.projectId, claim.generationRunId) as Array<{
       name: string;
       prompt: string;
       portrait_asset_id: string | null;
@@ -1295,6 +1459,7 @@ function getIllustrationRunInput(
         assetId,
         dataDir,
         projectId: claim.projectId,
+        generationRunId: claim.generationRunId,
       });
       if (!asset) {
         throw new PipelineStateError(
@@ -1379,9 +1544,9 @@ async function executePortraits(
   withDatabaseAt(dataDir, (database) => {
     const incomplete = database
       .prepare(
-        "SELECT 1 FROM characters WHERE project_id = ? AND portrait_status != 'COMPLETED' LIMIT 1",
+        "SELECT 1 FROM characters WHERE project_id = ? AND generation_run_id = ? AND portrait_status != 'COMPLETED' LIMIT 1",
       )
-      .get(claim.projectId);
+      .get(claim.projectId, claim.generationRunId);
     if (incomplete) {
       failPipelineRun(
         dataDir,
@@ -1412,12 +1577,13 @@ async function executeChapters(
           `
           SELECT interaction_id
           FROM gemini_interactions
-          WHERE project_id = ? AND step_key = 'CHARACTERS'
+          WHERE project_id = ? AND generation_run_id = ? AND step_key = 'CHARACTERS'
           ORDER BY created_at DESC
           LIMIT 1
         `,
         )
-        .get(claim.projectId) as { interaction_id: string } | undefined,
+        .get(claim.projectId, claim.generationRunId) as
+        { interaction_id: string } | undefined,
   )?.interaction_id;
   if (!previousInteractionId) {
     throw new PipelineStateError(
@@ -1495,9 +1661,9 @@ async function executeIllustrations(
   withDatabaseAt(dataDir, (database) => {
     const incomplete = database
       .prepare(
-        "SELECT 1 FROM chapters WHERE project_id = ? AND illustration_status != 'COMPLETED' LIMIT 1",
+        "SELECT 1 FROM chapters WHERE project_id = ? AND generation_run_id = ? AND illustration_status != 'COMPLETED' LIMIT 1",
       )
-      .get(claim.projectId);
+      .get(claim.projectId, claim.generationRunId);
     if (incomplete) {
       failPipelineRun(
         dataDir,
@@ -1520,9 +1686,9 @@ function completePipelineRun(
 ): boolean {
   const active = database
     .prepare(
-      "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+      "SELECT 1 FROM project_steps WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
     )
-    .get(claim.projectId, claim.step, claim.runId);
+    .get(claim.projectId, claim.generationRunId, claim.step, claim.runId);
   if (!active) return false;
   const result = database
     .prepare(
@@ -1530,16 +1696,33 @@ function completePipelineRun(
         UPDATE project_steps
         SET status = 'COMPLETED', active_run_id = NULL,
             heartbeat_at = ?, error_code = NULL, error_message = NULL, updated_at = ?
-        WHERE project_id = ? AND step_key = ? AND active_run_id = ?
+        WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ?
       `,
     )
-    .run(now, now, claim.projectId, claim.step, claim.runId);
+    .run(
+      now,
+      now,
+      claim.projectId,
+      claim.generationRunId,
+      claim.step,
+      claim.runId,
+    );
   if (result.changes !== 1) return false;
   database
     .prepare(
       "UPDATE pipeline_runs SET status = 'COMPLETED', finished_at = ?, heartbeat_at = ? WHERE id = ?",
     )
     .run(now, now, claim.runId);
+  database
+    .prepare(
+      `UPDATE generation_runs
+       SET status = 'COMPLETED', completed_at = ?, updated_at = ?
+       WHERE id = ? AND NOT EXISTS (
+         SELECT 1 FROM project_steps
+         WHERE generation_run_id = ? AND status != 'COMPLETED'
+       )`,
+    )
+    .run(now, now, claim.generationRunId, claim.generationRunId);
   return true;
 }
 
@@ -1571,10 +1754,18 @@ function failPipelineRun(
                   portrait_error_code = ?,
                   portrait_error_message = ?,
                   updated_at = ?
-              WHERE project_id = ? AND portrait_active_run_id = ?
+              WHERE project_id = ? AND generation_run_id = ? AND portrait_active_run_id = ?
             `,
           )
-          .run(now, code, message, now, claim.projectId, claim.runId);
+          .run(
+            now,
+            code,
+            message,
+            now,
+            claim.projectId,
+            claim.generationRunId,
+            claim.runId,
+          );
       }
       if (claim.step === "ILLUSTRATIONS") {
         database
@@ -1587,10 +1778,18 @@ function failPipelineRun(
                   illustration_error_code = ?,
                   illustration_error_message = ?,
                   updated_at = ?
-              WHERE project_id = ? AND illustration_active_run_id = ?
+              WHERE project_id = ? AND generation_run_id = ? AND illustration_active_run_id = ?
             `,
           )
-          .run(now, code, message, now, claim.projectId, claim.runId);
+          .run(
+            now,
+            code,
+            message,
+            now,
+            claim.projectId,
+            claim.generationRunId,
+            claim.runId,
+          );
       }
       const result = database
         .prepare(
@@ -1598,10 +1797,19 @@ function failPipelineRun(
             UPDATE project_steps
             SET status = 'FAILED', active_run_id = NULL,
                 heartbeat_at = ?, error_code = ?, error_message = ?, updated_at = ?
-            WHERE project_id = ? AND step_key = ? AND active_run_id = ?
+            WHERE project_id = ? AND generation_run_id = ? AND step_key = ? AND active_run_id = ?
           `,
         )
-        .run(now, code, message, now, claim.projectId, claim.step, claim.runId);
+        .run(
+          now,
+          code,
+          message,
+          now,
+          claim.projectId,
+          claim.generationRunId,
+          claim.step,
+          claim.runId,
+        );
       if (result.changes !== 1) return;
       database
         .prepare(
@@ -1641,16 +1849,19 @@ async function ensureBookContext(
       database
         .prepare(
           `
-          SELECT book_text_key, gemini_file_name, gemini_file_uri, gemini_context_interaction_id
-          FROM projects WHERE id = ?
+          SELECT p.book_text_key, p.gemini_file_name, p.gemini_file_uri,
+            gr.root_interaction_id
+          FROM projects p
+          INNER JOIN generation_runs gr ON gr.id = ? AND gr.project_id = p.id
+          WHERE p.id = ?
         `,
         )
-        .get(claim.projectId) as
+        .get(claim.generationRunId, claim.projectId) as
         | {
             book_text_key: string;
             gemini_file_name: string | null;
             gemini_file_uri: string | null;
-            gemini_context_interaction_id: string | null;
+            root_interaction_id: string | null;
           }
         | undefined,
   );
@@ -1673,7 +1884,7 @@ async function ensureBookContext(
     heartbeatPipelineRun(dataDir, claim);
   }
 
-  let contextInteractionId = project.gemini_context_interaction_id;
+  let contextInteractionId = project.root_interaction_id;
   if (!contextInteractionId) {
     assertPipelineRunActive(dataDir, claim);
     const context = await runWithPipelineHeartbeat(
@@ -1702,25 +1913,33 @@ async function executeStyle(
   dataDir: string,
   claim: StepClaim,
   requestedStyle: string,
-  adapter: GeminiTextAdapter,
+  adapter: GeminiTextAdapter | undefined,
   staleRunMs: number,
 ): Promise<void> {
+  if (requestedStyle) {
+    persistDirectStyleResult(dataDir, claim, requestedStyle);
+    return;
+  }
+  const textAdapter =
+    adapter ??
+    createGeminiTextAdapter(
+      loadServerEnv({ requireGeminiKey: true, requireTextModel: true }),
+    );
   const contextInteractionId = await ensureBookContext(
     dataDir,
     claim,
-    adapter,
+    textAdapter,
     staleRunMs,
   );
-  const prompt = requestedStyle
-    ? `The art style is: "${requestedStyle}". Store it as the canonical visual language for all future prompts. Reply only "Style saved."`
-    : "Define an art style that fits the story with a distinctive twist. Return only the art-style prompt that should be applied to future illustration prompts.";
+  const prompt =
+    "Define an art style that fits the story with a distinctive twist. Return only the art-style prompt that should be applied to future illustration prompts.";
   assertPipelineRunActive(dataDir, claim);
   const interaction = await runWithPipelineHeartbeat(
     dataDir,
     claim,
     staleRunMs,
     () =>
-      adapter.createTextInteraction({
+      textAdapter.createTextInteraction({
         previousInteractionId: contextInteractionId,
         prompt,
       }),
@@ -1729,7 +1948,7 @@ async function executeStyle(
   const style = requestedStyle || parseGeneratedStyle(interaction.outputText);
   persistStyleResult(dataDir, claim, {
     interactionId: interaction.id,
-    modelId: adapter.modelId,
+    modelId: textAdapter.modelId,
     previousId: contextInteractionId,
     style,
   });
@@ -1741,7 +1960,7 @@ async function executeCharacters(
   adapter: GeminiTextAdapter,
   staleRunMs: number,
 ): Promise<void> {
-  const previousInteractionId = withDatabaseAt(
+  let previousInteractionId = withDatabaseAt(
     dataDir,
     (database) =>
       database
@@ -1749,17 +1968,36 @@ async function executeCharacters(
           `
           SELECT interaction_id
           FROM gemini_interactions
-          WHERE project_id = ? AND step_key = 'STYLE'
+          WHERE project_id = ? AND generation_run_id = ? AND step_key = 'STYLE'
           ORDER BY created_at DESC
           LIMIT 1
         `,
         )
-        .get(claim.projectId) as { interaction_id: string } | undefined,
+        .get(claim.projectId, claim.generationRunId) as
+        { interaction_id: string } | undefined,
   )?.interaction_id;
   if (!previousInteractionId) {
+    previousInteractionId = await ensureBookContext(
+      dataDir,
+      claim,
+      adapter,
+      staleRunMs,
+    );
+  }
+  const style = withDatabaseAt(
+    dataDir,
+    (database) =>
+      database
+        .prepare(
+          "SELECT style_text FROM generation_runs WHERE id = ? AND project_id = ?",
+        )
+        .get(claim.generationRunId, claim.projectId) as
+        { style_text: string | null } | undefined,
+  )?.style_text;
+  if (!style) {
     throw new PipelineStateError(
       "STEP_ORDER",
-      "The Style interaction is missing; run Style again before Characters.",
+      "Complete Style before generating Characters.",
     );
   }
 
@@ -1771,8 +2009,7 @@ async function executeCharacters(
     () =>
       adapter.createTextInteraction({
         previousInteractionId,
-        prompt:
-          "Describe the main characters, adults only. Return at most two characters. Each character must be an adult and must include a detailed image-generation prompt of at least 50 words. Keep the established art style. Return only the requested JSON array.",
+        prompt: `Saved art style: ${style}\n\nDescribe the main characters, adults only. Return at most two characters. Each character must be an adult and must include a detailed image-generation prompt of at least 50 words. Keep the established art style. Return only the requested JSON array.`,
         responseFormat: CHARACTER_RESPONSE_FORMAT,
       }),
   );
@@ -1797,14 +2034,15 @@ export async function executePipelineRun(input: {
 }): Promise<void> {
   try {
     if (input.claim.step === "STYLE") {
-      const adapter =
-        input.adapter ??
-        createGeminiTextAdapter(
-          loadServerEnv({
-            requireGeminiKey: true,
-            requireTextModel: true,
-          }),
-        );
+      const adapter = input.requestedStyle
+        ? input.adapter
+        : (input.adapter ??
+          createGeminiTextAdapter(
+            loadServerEnv({
+              requireGeminiKey: true,
+              requireTextModel: true,
+            }),
+          ));
       await executeStyle(
         input.dataDir,
         input.claim,

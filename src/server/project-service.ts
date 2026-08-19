@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import crypto, { randomUUID } from "node:crypto";
 
 import type Database from "better-sqlite3";
 
@@ -22,17 +22,23 @@ import {
   removeBookText,
   writeBookTextAtomically,
 } from "@/server/book-text";
+import {
+  createInitialGenerationRun,
+  listGenerationRuns,
+} from "@/server/generation-run-service";
 
 type ProjectRow = {
   id: string;
   title: string;
   book_text_key: string;
   created_at: string;
-  style_text: string | null;
+  active_generation_run_id: string;
+  source_snapshot_hash: string;
   step_statuses: string;
 };
 
 type StepRow = {
+  generation_run_id: string;
   active_run_id: string | null;
   attempt_count: number;
   claimed_at: string | null;
@@ -46,6 +52,7 @@ type StepRow = {
 
 type CharacterRow = {
   id: string;
+  generation_run_id: string;
   name: string;
   position: number;
   prompt: string;
@@ -61,6 +68,7 @@ type CharacterRow = {
 
 type ChapterRow = {
   id: string;
+  generation_run_id: string;
   name: string;
   position: number;
   prompt: string;
@@ -187,6 +195,7 @@ function toSummary(row: ProjectRow): ProjectSummary {
     status: deriveProjectStatus(statuses),
     completedSteps: statuses.filter((status) => status === "COMPLETED").length,
     totalSteps: PIPELINE_STEPS.length,
+    activeGenerationRunId: row.active_generation_run_id,
   };
 }
 
@@ -204,13 +213,14 @@ function selectProjectRows(
           p.title,
           p.book_text_key,
           p.created_at,
-          p.style_text,
+          p.active_generation_run_id,
+          p.source_snapshot_hash,
           (
             SELECT GROUP_CONCAT(ordered_steps.status, ',')
             FROM (
               SELECT status
               FROM project_steps
-              WHERE project_id = p.id
+              WHERE generation_run_id = p.active_generation_run_id
               ORDER BY position ASC
             ) AS ordered_steps
           ) AS step_statuses
@@ -218,7 +228,8 @@ function selectProjectRows(
         WHERE p.user_id = @userId
           ${whereProject}
           AND EXISTS (
-            SELECT 1 FROM project_steps ps WHERE ps.project_id = p.id
+            SELECT 1 FROM project_steps ps
+            WHERE ps.generation_run_id = p.active_generation_run_id
           )
         ORDER BY p.created_at DESC, p.id DESC
       `,
@@ -234,6 +245,10 @@ export function createProject(
   const bookText = normalizeBookText(input.bookText);
   const projectId = randomUUID();
   const bookTextKey = writeBookTextAtomically(input.dataDir, bookText);
+  const sourceSnapshotHash = crypto
+    .createHash("sha256")
+    .update(bookText)
+    .digest("hex");
   const timestamp = new Date().toISOString();
 
   try {
@@ -242,8 +257,9 @@ export function createProject(
         .prepare(
           `
             INSERT INTO projects
-              (id, user_id, title, book_text_key, book_text_characters, created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+              (id, user_id, title, book_text_key, book_text_characters,
+               source_snapshot_hash, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
           `,
         )
         .run(
@@ -252,19 +268,38 @@ export function createProject(
           title,
           bookTextKey,
           bookText.length,
+          sourceSnapshotHash,
           timestamp,
           timestamp,
         );
 
+      const generationRunId = createInitialGenerationRun(database, {
+        createdAt: timestamp,
+        projectId,
+        sourceSnapshotHash,
+      });
+      database
+        .prepare(
+          "UPDATE projects SET active_generation_run_id = ? WHERE id = ?",
+        )
+        .run(generationRunId, projectId);
+
       const insertStep = database.prepare(
         `
           INSERT INTO project_steps
-            (project_id, step_key, position, status, created_at, updated_at)
-          VALUES (?, ?, ?, 'PENDING', ?, ?)
+            (generation_run_id, project_id, step_key, position, status, created_at, updated_at)
+          VALUES (?, ?, ?, ?, 'PENDING', ?, ?)
         `,
       );
       PIPELINE_STEPS.forEach((step, index) => {
-        insertStep.run(projectId, step, index, timestamp, timestamp);
+        insertStep.run(
+          generationRunId,
+          projectId,
+          step,
+          index,
+          timestamp,
+          timestamp,
+        );
       });
     });
 
@@ -305,6 +340,7 @@ export function getProjectDetail(
     .prepare(
       `
         SELECT
+          generation_run_id,
           step_key,
           position,
           status,
@@ -315,16 +351,17 @@ export function getProjectDetail(
           error_code,
           error_message
         FROM project_steps
-        WHERE project_id = ?
+        WHERE generation_run_id = ?
         ORDER BY position ASC
       `,
     )
-    .all(projectId) as StepRow[];
+    .all(row.active_generation_run_id) as StepRow[];
   const characterRows = database
     .prepare(
       `
         SELECT
           c.id,
+          c.generation_run_id,
           c.name,
           c.position,
           c.prompt,
@@ -337,16 +374,17 @@ export function getProjectDetail(
           c.portrait_heartbeat_at,
           c.portrait_status
         FROM characters AS c
-        WHERE c.project_id = ?
+        WHERE c.generation_run_id = ?
         ORDER BY c.position ASC
       `,
     )
-    .all(projectId) as CharacterRow[];
+    .all(row.active_generation_run_id) as CharacterRow[];
   const chapterRows = database
     .prepare(
       `
         SELECT
           ch.id,
+          ch.generation_run_id,
           ch.name,
           ch.position,
           ch.prompt,
@@ -359,11 +397,11 @@ export function getProjectDetail(
           ch.illustration_heartbeat_at,
           ch.illustration_status
         FROM chapters AS ch
-        WHERE ch.project_id = ?
+        WHERE ch.generation_run_id = ?
         ORDER BY ch.position ASC
       `,
     )
-    .all(projectId) as ChapterRow[];
+    .all(row.active_generation_run_id) as ChapterRow[];
   const now = Date.now();
   const characters: CharacterView[] = characterRows.map((character) => ({
     id: character.id,
@@ -381,13 +419,24 @@ export function getProjectDetail(
     illustration: toIllustrationView(chapter, staleRunMs, now),
   }));
 
+  const activeRun = database
+    .prepare("SELECT status, style_text FROM generation_runs WHERE id = ?")
+    .get(row.active_generation_run_id) as
+    { status: string; style_text: string | null } | undefined;
+
   return {
     ...summary,
     bookText: readBookText(dataDir, row.book_text_key),
     characters,
     chapters,
-    style: row.style_text,
-    steps: toStepViews(stepRows, staleRunMs),
+    style: activeRun?.style_text ?? null,
+    steps: toStepViews(stepRows, staleRunMs).map((step) => ({
+      ...step,
+      generationRunId: row.active_generation_run_id,
+    })),
+    activeGenerationRunId: row.active_generation_run_id,
+    selectedRunReadOnly: activeRun?.status !== "ACTIVE",
+    generationRuns: listGenerationRuns(database, userId, projectId) ?? [],
   };
 }
 

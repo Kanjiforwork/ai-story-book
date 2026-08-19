@@ -180,7 +180,12 @@ export function getOwnedAssetFile(
 
 export function getProjectAssetFile(
   database: Database.Database,
-  input: { assetId: string; dataDir: string; projectId: string },
+  input: {
+    assetId: string;
+    dataDir: string;
+    projectId: string;
+    generationRunId: string;
+  },
 ): OwnedAssetFile | null {
   if (!isSafeAssetId(input.assetId)) return null;
 
@@ -190,9 +195,11 @@ export function getProjectAssetFile(
         SELECT a.id, a.storage_key, a.mime_type, a.byte_size
         FROM assets a
         WHERE a.id = ? AND a.project_id = ?
+          AND a.generation_run_id = ?
       `,
     )
-    .get(input.assetId, input.projectId) as AssetRow | undefined;
+    .get(input.assetId, input.projectId, input.generationRunId) as
+    AssetRow | undefined;
   if (!row) return null;
 
   let filePath: string;
