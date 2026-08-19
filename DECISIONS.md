@@ -1,59 +1,44 @@
 # Engineering Decisions
 
-This file records real decisions and trade-offs, not a diary. Each completed entry must say who proposed the idea, who pushed back, where we landed, and what cost we accepted. At least three entries must describe genuine AI overrides. Do not count the working entries below as final AI-override evidence until the relevant planning or implementation interaction actually happens.
+This file records five real decisions from the planning and implementation conversations. It is not a diary, requirement summary, or architecture reference. Requirements such as server-side Gemini calls, the five-step pipeline, and demo coverage belong in `docs/plan.md` and `AGENTS.md`.
 
-## Working decision: SQLite metadata instead of JSON files
+## 1. SQLite instead of JSON files
 
-**Status:** Direction agreed; AI-override evidence pending.
+- AI suggestion: JSON files could fit a small take-home.
+- My pushback: the app needs atomic step claims, concurrent-request protection, project queries, and durable per-image progress.
+- Decision: use SQLite for users, projects, step state, run claims, item progress, and Gemini metadata. Keep book text and generated images on the local filesystem.
+- Trade-off: I accepted a database schema and local dependency in exchange for state transitions that are easier to inspect and test.
 
-For the local assessment, use SQLite for users, projects, ordered step state, run claims, item progress, and Gemini interaction metadata. Keep book text and generated images on the local filesystem. JSON files appear attractive because the scope is small, but overlapping requests, atomic claims, and querying a user's projects are easier to make correct with SQLite transactions. The accepted cost is a small schema and local database dependency; this remains a single-process local application, not a production distributed system.
+## 2. Separate pipeline progress from execution state
 
-When the implementation agent proposes the concrete storage design, update this entry with the actual proposal, the human pushback, and the final evidence.
+- Question: should one status value represent both overall progress and the step currently running?
+- My decision: keep durable progress, current execution state, and image-item state separate.
+- Result: the UI can show completed progress while a later step is running, failed, or stale; a successful portrait remains visible when another image fails.
+- Trade-off: image generation runs in parallel with per-item persistence, which requires more state fields and transition tests.
 
-## Working decision: durable progress is separate from execution state
+## 3. Failure-first UX
 
-**Status:** Direction agreed; AI-override evidence pending.
+- Problem I observed: a generic spinner does not explain a Gemini call that takes tens of seconds or fails halfway through.
+- My decision: use named running states, visible progress, partial results, inline errors, explicit retry, and stale recovery.
+- Scope note: this is my product decision from testing the UX, not a claim that the assessment dictated every visual detail.
+- Trade-off: more UI states, copy, and frontend tests in exchange for a workflow users can trust.
 
-Do not represent the pipeline with one overloaded status enum. Persist completed progress separately from the currently running or failed step, and persist image-item state separately so a partial result remains visible. The progress bar should be derived from persisted state, not treated as the source of truth. The accepted cost is more fields and more transition tests, plus explicit stale-run recovery.
+## 4. Lightweight workflow for a single-developer take-home
 
-When the implementation agent proposes its state model, update this entry with the actual proposal and the specific correction made.
+- AI suggestion: use short-lived feature branches and commit completed slices automatically.
+- My pushback: this is a small local take-home with one developer and no production release or pull-request workflow; an earlier unapproved commit also showed why the approval boundary matters.
+- Decision: work on `main`, keep meaningful milestone commits, and require my explicit approval before every commit.
+- Trade-off: less branch isolation and a manual approval pause, but a simpler Git history and no accidental commits.
 
-## Working decision: failure-first UX instead of a happy-path spinner
+## 5. Project-scoped saved progress instead of a user-facing cache
 
-**Status:** Direction agreed; AI-override evidence pending.
-
-The detail page must make the current step, partial image progress, errors, retry actions, and interrupted-step recovery visible. A generic “Generating…” state is not enough for calls that can take 10–30 seconds or survive refresh. The accepted cost is more UI states, copy, and frontend tests; the benefit is that the interface explains what the user can do when generation is slow or incomplete.
-
-When the implementation agent proposes its first UX flow, update this entry with the actual AI suggestion and the human override.
-
-## Working decision: demo as the UX floor, not the runtime implementation
-
-**Status:** Direction agreed; AI-override evidence pending.
-
-Use `app-demo.html` to define the minimum visual scope, screens, interaction coverage, and state naming. Do not copy its localStorage store, fake timers, placeholder images, fake timings, or one-tab duplicate guard into the real app. The accepted cost is that the real UI needs more explicit components and state tests, but the result will represent the actual server/Gemini behavior instead of a polished prototype with misleading guarantees.
-
-When the implementation agent proposes its first component structure or attempts to reuse demo behavior, update this entry with the actual proposal and the correction made.
-
-## Decision: server-side Gemini adapter with text-only M2 verification
-
-**Status:** Implemented for M2.
-
-The AI proposed following the notebook's Gemini flow—upload the book once, chain Style and Characters through the Interactions API, and validate structured output—but kept the model configurable behind a server-only adapter. Bao chose `gemini-3.6-flash` for text and explicitly pushed back on live image generation during testing because it incurs cost. We landed on the official `@google/genai` SDK, with the source file URI and interaction IDs persisted so refreshes and retries do not restart the context. The accepted cost is that M2 verifies the text pipeline with mocks and a local UI smoke test; real Gemini text and image calls remain deliberate UAT/M3 work.
-
-## Working decision: main-only workflow for the local take-home
-
-**Status:** Direction agreed during planning.
-
-The AI initially required a short-lived `codex/<topic>` branch for implementation. Bao pushed back because this is a small, single-developer, local take-home with no production release, parallel feature work, or pull-request review. We landed on working directly on `main` and using small, meaningful commits as the primary safety and review mechanism. A short-lived branch remains available for parallel work, PR/review, or a risky experiment that needs isolation. The accepted cost is less branch-level isolation during normal work; the benefit is less workflow overhead and a clearer linear Git history for the assessment. This is a scope-specific choice, not a general production branching policy.
-
-## Decisions still to settle during planning
-
-- Gemini image mechanics and cost boundary for M3.
-- Polling versus SSE/WebSockets: likely polling for the local time-boxed scope unless evidence shows otherwise.
-- Lightweight server-owned session representation and its cookie/security trade-off.
-- Asset API shape and path-traversal protection.
-- Exact test boundary and the commands that produce the real report.
+- AI/implementation result: the cache work exposed generation history, saved runs, and a `Use previous run` action.
+- My pushback: users should not need to understand cache keys, run versions, or internal Gemini interactions.
+- Decision: show one current pipeline per project. Reuse book context and saved results inside that project, but keep another project with the same text independent.
+- Behavior: reopening a project reads saved state without a Gemini call; changing style explicitly regenerates downstream results. Internal run metadata stays available for duplicate protection, stale recovery, and debugging, but remains hidden from the primary UX.
+- Trade-off: two projects with identical text may call Gemini independently and produce different output, but the product is easier to understand and safer to isolate.
 
 ## If I had one more day
 
-To be completed after the core flow is working and the remaining limitation is known. The answer must name one concrete next feature and why it would improve the product or engineering confidence.
+- Status: not decided yet.
+- Before submission, I will choose one concrete next feature based on real UAT instead of inventing a retrospective answer.
