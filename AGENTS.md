@@ -68,18 +68,20 @@ Work in small, inspectable vertical slices:
 4. Run focused checks sequentially; never hide a failing command.
 5. Inspect the diff and confirm unrelated user changes are preserved.
 6. Explain the critical path: user action → frontend state → server/API → database/filesystem/Gemini → persisted result → rendered UI → failure recovery.
-7. Commit the completed slice.
+7. Prepare a proposed commit for the completed slice, but do not run `git commit` until Bao explicitly approves it.
 
 Do not build the whole product in one response. Avoid speculative abstractions, bonus notebook sections, distributed infrastructure, or features that are not tied to the assessment score.
 
 ## Commit policy
 
-Commit continuously, but at meaningful boundaries—not after every line and not only at the end.
+Prepare commits continuously at meaningful boundaries—not after every line and not only at the end—but wait for Bao's explicit approval before creating any commit.
 
 - Keep commits small, focused, and reversible.
 - Use imperative Conventional Commit-style messages, for example `feat: add project persistence` or `test: cover stale step recovery`.
 - One commit should represent one coherent change; do not mix unrelated cleanup with a feature.
-- Before committing, inspect the staged diff and run the relevant focused checks plus `git diff --check`.
+- Before requesting commit approval, stage only the intended files, inspect the staged diff, and run the relevant focused checks plus `git diff --check`.
+- Never run `git commit` automatically because a slice is complete. Present the exact proposed commit message, body, staged files, and verification results, then ask Bao whether to commit.
+- If Bao declines or has not answered, leave the changes uncommitted and preserve the worktree.
 - Do not manufacture commits, timestamps, review findings, test output, or AI history.
 - Do not squash meaningful progress into one final commit.
 - If AI authored most of a commit, say so honestly in the commit body and include what was human-reviewed and verified.

@@ -267,7 +267,7 @@ The final `TESTING.md` must distinguish automated mocked tests from real Gemini 
 
 ## 11. Implementation milestones and stop lines
 
-Each milestone should be a small, reviewable commit with focused checks and an honest commit body when AI authored most of the work.
+Each milestone is a candidate small, reviewable commit boundary with focused checks and an honest commit body when AI authored most of the work. Follow `AGENTS.md`: prepare the exact commit proposal, but wait for Bao's explicit approval before running `git commit`.
 
 ### M0 — Harness and foundation
 
