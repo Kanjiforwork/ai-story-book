@@ -1,0 +1,10 @@
+.next/
+coverage/
+data/
+node_modules/
+docs/reference/
+AGENTS.md
+DECISIONS.md
+DESIGN.md
+docs/plan.md
+package-lock.json

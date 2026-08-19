@@ -1,1 +1,20 @@
 docs/reference/
+
+# Secrets and local environment overrides
+.env.local
+.env.*.local
+.env.production
+.env.development
+
+# Build and test output
+.next/
+coverage/
+node_modules/
+
+# Local SQLite and generated application data
+data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tsbuildinfo
+public/generated/

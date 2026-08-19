@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+:root {
+  --grad-orange: #ff6b00;
+  --grad-orange-hover: #e85f00;
+  --grad-ink: #231f20;
+  --grad-ink-body: #595959;
+  --grad-ink-muted: #919699;
+  --grad-line: #bab7b1;
+  --grad-paper: #f2eee7;
+  --grad-surface: #ffffff;
+  --grad-canvas: #f8f8f8;
+}
+
+@theme inline {
+  --color-orange: var(--grad-orange);
+  --color-orange-hover: var(--grad-orange-hover);
+  --color-ink: var(--grad-ink);
+  --color-ink-body: var(--grad-ink-body);
+  --color-ink-muted: var(--grad-ink-muted);
+  --color-line: var(--grad-line);
+  --color-paper: var(--grad-paper);
+  --color-surface: var(--grad-surface);
+  --color-canvas: var(--grad-canvas);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--grad-canvas);
+}
+
+body {
+  min-height: 100vh;
+  margin: 0;
+  background: var(--grad-canvas);
+  color: var(--grad-ink);
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+button,
+a {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--grad-orange) 55%, white);
+  outline-offset: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
