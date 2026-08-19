@@ -5,6 +5,7 @@ import type Database from "better-sqlite3";
 import { PIPELINE_STEP_LABELS, PIPELINE_STEPS } from "@/domain/pipeline";
 import type {
   CharacterView,
+  PortraitItemStatus,
   ProjectDetailView,
   ProjectStatus,
   ProjectStepRunView,
@@ -39,6 +40,21 @@ type StepRow = {
   step_key: (typeof PIPELINE_STEPS)[number];
   position: number;
   status: ProjectStepStatus;
+};
+
+type CharacterRow = {
+  id: string;
+  name: string;
+  position: number;
+  prompt: string;
+  portrait_active_run_id: string | null;
+  portrait_asset_id: string | null;
+  portrait_attempt_count: number;
+  portrait_claimed_at: string | null;
+  portrait_error_code: string | null;
+  portrait_error_message: string | null;
+  portrait_heartbeat_at: string | null;
+  portrait_status: PortraitItemStatus;
 };
 
 export const DEFAULT_STALE_RUN_MS = 120_000;
@@ -89,6 +105,34 @@ function toStepRunView(
     errorCode: row.error_code,
     errorMessage: row.error_message,
     isStale,
+  };
+}
+
+function toPortraitView(
+  row: CharacterRow,
+  staleRunMs: number,
+  now: number,
+): CharacterView["portrait"] {
+  const heartbeatTime = row.portrait_heartbeat_at
+    ? Date.parse(row.portrait_heartbeat_at)
+    : Number.NaN;
+  const isStale =
+    row.portrait_status === "RUNNING" &&
+    Number.isFinite(heartbeatTime) &&
+    now - heartbeatTime > staleRunMs;
+
+  return {
+    attempt: row.portrait_attempt_count,
+    assetId: row.portrait_asset_id,
+    assetUrl: row.portrait_asset_id
+      ? `/api/assets/${row.portrait_asset_id}`
+      : null,
+    claimedAt: row.portrait_claimed_at,
+    errorCode: row.portrait_error_code,
+    errorMessage: row.portrait_error_message,
+    heartbeatAt: row.portrait_heartbeat_at,
+    isStale,
+    status: row.portrait_status,
   };
 }
 
@@ -234,16 +278,36 @@ export function getProjectDetail(
       `,
     )
     .all(projectId) as StepRow[];
-  const characters = database
+  const characterRows = database
     .prepare(
       `
-        SELECT id, name, position, prompt
-        FROM characters
-        WHERE project_id = ?
-        ORDER BY position ASC
+        SELECT
+          c.id,
+          c.name,
+          c.position,
+          c.prompt,
+          c.portrait_active_run_id,
+          c.portrait_asset_id,
+          c.portrait_attempt_count,
+          c.portrait_claimed_at,
+          c.portrait_error_code,
+          c.portrait_error_message,
+          c.portrait_heartbeat_at,
+          c.portrait_status
+        FROM characters AS c
+        WHERE c.project_id = ?
+        ORDER BY c.position ASC
       `,
     )
-    .all(projectId) as CharacterView[];
+    .all(projectId) as CharacterRow[];
+  const now = Date.now();
+  const characters: CharacterView[] = characterRows.map((character) => ({
+    id: character.id,
+    name: character.name,
+    position: character.position,
+    prompt: character.prompt,
+    portrait: toPortraitView(character, staleRunMs, now),
+  }));
   const summary = toSummary(row);
 
   return {

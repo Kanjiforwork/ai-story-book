@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SignOutButton } from "@/components/sign-out-button";
 import { IdentityForm } from "@/components/identity-form";
 import { ProjectDetail } from "@/components/project-detail";
+import { CharacterGrid } from "@/components/character-grid";
 import type { ProjectDetailView } from "@/domain/project";
 import type { AuthenticatedUser } from "@/server/auth";
 
@@ -143,7 +144,7 @@ describe("foundation app shell", () => {
     ).toBeInTheDocument();
   });
 
-  it("stops the M2 action panel after Characters", () => {
+  it("opens the Portraits action after Characters without opening later steps", () => {
     const project = projectFixture();
     project.completedSteps = 2;
     project.status = "IN_PROGRESS";
@@ -153,9 +154,65 @@ describe("foundation app shell", () => {
 
     render(<ProjectDetail project={project} user={user} />);
 
-    expect(screen.getByText("Text pipeline complete.")).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /generate portraits/i }),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: /generate portraits/i }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Chapters").length).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText("Locked in this milestone").length,
+    ).toBeGreaterThan(0);
+  });
+
+  it("renders a saved portrait beside a retryable partial failure", () => {
+    render(
+      <CharacterGrid
+        characters={[
+          {
+            id: "character-1",
+            name: "Mole",
+            position: 0,
+            prompt: "An adult mole portrait prompt.",
+            portrait: {
+              assetId: "asset-1",
+              assetUrl: "/api/assets/asset-1",
+              attempt: 1,
+              claimedAt: "2026-01-01T00:00:00.000Z",
+              errorCode: null,
+              errorMessage: null,
+              heartbeatAt: "2026-01-01T00:00:00.000Z",
+              isStale: false,
+              status: "COMPLETED",
+            },
+          },
+          {
+            id: "character-2",
+            name: "Rat",
+            position: 1,
+            prompt: "An adult rat portrait prompt.",
+            portrait: {
+              assetId: null,
+              assetUrl: null,
+              attempt: 1,
+              claimedAt: "2026-01-01T00:00:00.000Z",
+              errorCode: "GEMINI_FAILED",
+              errorMessage: "Mock image service rejected Rat.",
+              heartbeatAt: "2026-01-01T00:00:00.000Z",
+              isStale: false,
+              status: "FAILED",
+            },
+          },
+        ]}
+        onRetry={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByAltText("Portrait of Mole")).toBeInTheDocument();
+    expect(
+      screen.getByText("Mock image service rejected Rat."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Retry portrait" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/1 of 2 saved/)).toBeInTheDocument();
   });
 });

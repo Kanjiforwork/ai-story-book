@@ -9,6 +9,15 @@ export const PROJECT_STEP_STATUSES = [
 
 export type ProjectStepStatus = (typeof PROJECT_STEP_STATUSES)[number];
 
+export const PORTRAIT_ITEM_STATUSES = [
+  "PENDING",
+  "RUNNING",
+  "FAILED",
+  "COMPLETED",
+] as const;
+
+export type PortraitItemStatus = (typeof PORTRAIT_ITEM_STATUSES)[number];
+
 export type ProjectStatus = "DRAFT" | "IN_PROGRESS" | "DONE";
 
 export type ProjectStepView = {
@@ -32,6 +41,19 @@ export type CharacterView = {
   name: string;
   position: number;
   prompt: string;
+  portrait: PortraitItemView;
+};
+
+export type PortraitItemView = {
+  attempt: number;
+  assetId: string | null;
+  assetUrl: string | null;
+  claimedAt: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  heartbeatAt: string | null;
+  isStale: boolean;
+  status: PortraitItemStatus;
 };
 
 export type ProjectSummary = {

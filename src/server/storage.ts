@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { loadServerEnv } from "@/server/env";
 
 const DATABASE_FILENAME = "gradion.sqlite";
-const CURRENT_SCHEMA_VERSION = 3;
+const CURRENT_SCHEMA_VERSION = 4;
 
 export function ensureDataDirectory(dataDir?: string): string {
   const resolved = path.resolve(
@@ -174,6 +174,47 @@ export function openDatabase(dataDir?: string): Database.Database {
     });
 
     migrateToVersionThree();
+  }
+
+  if (currentVersion < 4) {
+    const migrateToVersionFour = database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS assets (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          kind TEXT NOT NULL CHECK (kind IN ('PORTRAIT', 'ILLUSTRATION')),
+          storage_key TEXT NOT NULL UNIQUE,
+          mime_type TEXT NOT NULL,
+          byte_size INTEGER NOT NULL,
+          checksum TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL
+        );
+
+        CREATE INDEX IF NOT EXISTS assets_project_kind_idx
+          ON assets(project_id, kind, created_at ASC);
+
+        ALTER TABLE characters ADD COLUMN portrait_status TEXT NOT NULL DEFAULT 'PENDING'
+          CHECK (portrait_status IN ('PENDING', 'RUNNING', 'FAILED', 'COMPLETED'));
+        ALTER TABLE characters ADD COLUMN portrait_active_run_id TEXT;
+        ALTER TABLE characters ADD COLUMN portrait_attempt_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE characters ADD COLUMN portrait_claimed_at TEXT;
+        ALTER TABLE characters ADD COLUMN portrait_heartbeat_at TEXT;
+        ALTER TABLE characters ADD COLUMN portrait_error_code TEXT;
+        ALTER TABLE characters ADD COLUMN portrait_error_message TEXT;
+        ALTER TABLE characters ADD COLUMN portrait_asset_id TEXT
+          REFERENCES assets(id) ON DELETE SET NULL;
+
+        CREATE INDEX IF NOT EXISTS characters_portrait_status_idx
+          ON characters(project_id, portrait_status);
+      `);
+
+      database
+        .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
+        .run(String(CURRENT_SCHEMA_VERSION), "schema_version");
+    });
+
+    migrateToVersionFour();
   }
 
   return database;

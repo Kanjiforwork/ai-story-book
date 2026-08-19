@@ -292,6 +292,7 @@ Each milestone is a candidate small, reviewable commit boundary with focused che
 
 - Implement parallel settled image execution, per-character item state, immediate asset persistence, safe asset route, and retry that skips completed portraits.
 - Build the card/progress states required by `DESIGN.md`.
+- Implemented boundary for this milestone: `STYLE`, `CHARACTERS`, and `PORTRAITS`. `CHAPTERS` and `ILLUSTRATIONS` remain visible in the stepper but are rejected by the server and locked in the UI.
 - Evidence: one successful and one failed portrait survives refresh and only the failed item is retried.
 
 ### M4 — Chapters and Illustrations

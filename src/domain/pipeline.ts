@@ -12,6 +12,15 @@ export const TEXT_PIPELINE_STEPS = ["STYLE", "CHARACTERS"] as const;
 
 export type TextPipelineStep = (typeof TEXT_PIPELINE_STEPS)[number];
 
+export const IMPLEMENTED_PIPELINE_STEPS = [
+  "STYLE",
+  "CHARACTERS",
+  "PORTRAITS",
+] as const;
+
+export type ImplementedPipelineStep =
+  (typeof IMPLEMENTED_PIPELINE_STEPS)[number];
+
 export type PipelineErrorCode =
   | "STEP_ORDER"
   | "STEP_ALREADY_COMPLETED"
@@ -42,6 +51,12 @@ export function isTextPipelineStep(
   step: PipelineStep,
 ): step is TextPipelineStep {
   return (TEXT_PIPELINE_STEPS as readonly string[]).includes(step);
+}
+
+export function isImplementedPipelineStep(
+  step: PipelineStep,
+): step is ImplementedPipelineStep {
+  return (IMPLEMENTED_PIPELINE_STEPS as readonly string[]).includes(step);
 }
 
 export function previousPipelineStep(

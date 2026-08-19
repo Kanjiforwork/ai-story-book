@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   assertPipelineCaps,
+  IMPLEMENTED_PIPELINE_STEPS,
   PIPELINE_LIMITS,
   PIPELINE_STEPS,
 } from "@/domain/pipeline";
@@ -14,6 +15,14 @@ describe("pipeline contract", () => {
       "PORTRAITS",
       "CHAPTERS",
       "ILLUSTRATIONS",
+    ]);
+  });
+
+  it("keeps the implementation boundary at Portraits", () => {
+    expect(IMPLEMENTED_PIPELINE_STEPS).toEqual([
+      "STYLE",
+      "CHARACTERS",
+      "PORTRAITS",
     ]);
   });
 

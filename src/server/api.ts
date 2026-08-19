@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { ValidationError } from "@/domain/validation";
+import { AssetError } from "@/server/asset-service";
 import { GeminiError } from "@/server/gemini";
 import { GeminiOutputError } from "@/server/gemini-output";
 import { PipelineStateError } from "@/server/pipeline-service";
@@ -17,6 +18,8 @@ export type ApiErrorCode =
   | "STEP_NOT_AVAILABLE"
   | "GEMINI_FAILED"
   | "GEMINI_INVALID_OUTPUT"
+  | "PORTRAIT_PARTIAL_FAILURE"
+  | "ASSET_WRITE_FAILED"
   | "INTERNAL_ERROR";
 
 export function jsonError(
@@ -40,6 +43,9 @@ export function errorResponse(error: unknown): NextResponse {
   }
   if (error instanceof GeminiError) {
     return jsonError(error.code, error.message, 502);
+  }
+  if (error instanceof AssetError) {
+    return jsonError(error.code, error.message, 500);
   }
   console.error(
     "API request failed",

@@ -4,9 +4,9 @@ import type { ProjectStepView } from "@/domain/project";
 const STEP_DESCRIPTIONS: Record<PipelineStep, string> = {
   STYLE: "Set a visual language for every illustration in this project.",
   CHARACTERS: "Find the main adult characters and prepare portrait prompts.",
-  PORTRAITS: "Portrait generation will be available in the next milestone.",
-  CHAPTERS: "Chapter prompt generation will follow the character portraits.",
-  ILLUSTRATIONS: "Scene illustration generation will finish the project.",
+  PORTRAITS: "Create one saved 3:4 portrait for each adult character.",
+  CHAPTERS: "Chapter prompts are planned for a later milestone.",
+  ILLUSTRATIONS: "Scene illustrations are planned for a later milestone.",
 };
 
 const RUNNING_COPY: Record<PipelineStep, string> = {
@@ -25,6 +25,7 @@ export function StepActionPanel({
   pending,
   styleDraft,
   onStyleDraftChange,
+  implementedPipelineComplete = false,
   textPipelineComplete = false,
 }: {
   actionError: string | null;
@@ -34,8 +35,11 @@ export function StepActionPanel({
   pending: boolean;
   styleDraft: string;
   onStyleDraftChange: (value: string) => void;
+  implementedPipelineComplete?: boolean;
   textPipelineComplete?: boolean;
 }) {
+  const milestoneComplete = implementedPipelineComplete || textPipelineComplete;
+
   if (!currentStep) {
     return (
       <section className="rounded-3xl border border-ink/10 bg-surface p-6 shadow-[0_10px_35px_rgba(35,31,32,0.06)] sm:p-8">
@@ -43,13 +47,13 @@ export function StepActionPanel({
           <span className="flex size-8 items-center justify-center rounded-full bg-ink text-white">
             ✓
           </span>
-          {textPipelineComplete
-            ? "Text pipeline complete."
+          {milestoneComplete
+            ? "Portraits milestone complete."
             : "All pipeline steps are complete."}
         </div>
         <p className="mt-4 text-sm leading-6 text-ink-body">
-          {textPipelineComplete
-            ? "Style and Characters are saved. Portraits, Chapters, and Illustrations will be added in the next milestones."
+          {milestoneComplete
+            ? "Style, Characters, and Portraits are saved. Chapters and Illustrations remain locked until a later milestone."
             : "Nothing regenerates automatically. Your generated results remain saved when you return."}
         </p>
       </section>

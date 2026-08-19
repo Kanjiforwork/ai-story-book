@@ -3,7 +3,8 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 
 import {
-  isTextPipelineStep,
+  assertPipelineCaps,
+  isImplementedPipelineStep,
   previousPipelineStep,
   type PipelineErrorCode,
   type PipelineStep,
@@ -20,10 +21,23 @@ import {
   createGeminiTextAdapter,
   type GeminiTextAdapter,
 } from "@/server/gemini";
+import {
+  createGeminiImageAdapter,
+  type GeminiImageAdapter,
+} from "@/server/gemini-image";
 import { resolveBookPath } from "@/server/book-text";
+import {
+  removeImageAsset,
+  writeImageAsset,
+  type StoredImageAsset,
+} from "@/server/asset-service";
 import { openDatabase } from "@/server/storage";
 
-type PipelineStateCode = PipelineErrorCode | "NOT_FOUND";
+type PipelineStateCode =
+  | PipelineErrorCode
+  | "ASSET_WRITE_FAILED"
+  | "NOT_FOUND"
+  | "PORTRAIT_PARTIAL_FAILURE";
 
 export class PipelineStateError extends Error {
   constructor(
@@ -52,6 +66,12 @@ type StepExecutionRow = {
   gemini_file_uri: string | null;
   position: number;
   status: string;
+};
+
+type PortraitSelectionRow = {
+  id: string;
+  portrait_active_run_id: string | null;
+  portrait_status: "PENDING" | "RUNNING" | "FAILED" | "COMPLETED";
 };
 
 function getStepRow(
@@ -99,6 +119,66 @@ function assertFreshRun(
   );
 }
 
+function selectPortraitItems(
+  database: Database.Database,
+  projectId: string,
+  characterId?: string,
+): PortraitSelectionRow[] {
+  const rows = database
+    .prepare(
+      `
+        SELECT id, portrait_active_run_id, portrait_status
+        FROM characters
+        WHERE project_id = ?
+        ORDER BY position ASC
+      `,
+    )
+    .all(projectId) as PortraitSelectionRow[];
+
+  try {
+    assertPipelineCaps({ adultCharacterCount: rows.length, chapterCount: 0 });
+  } catch (error) {
+    throw new PipelineStateError(
+      "GEMINI_INVALID_OUTPUT",
+      error instanceof Error
+        ? error.message
+        : "The project exceeds the portrait character limit.",
+    );
+  }
+  if (rows.length === 0) {
+    throw new PipelineStateError(
+      "STEP_ORDER",
+      "Complete Characters before generating portraits.",
+    );
+  }
+
+  const selected = characterId
+    ? rows.filter((row) => row.id === characterId)
+    : rows.filter((row) => row.portrait_status !== "COMPLETED");
+  if (characterId && selected.length === 0) {
+    throw new PipelineStateError("NOT_FOUND", "Character not found.");
+  }
+  if (selected.some((row) => row.portrait_status === "COMPLETED")) {
+    throw new PipelineStateError(
+      "STEP_ALREADY_COMPLETED",
+      "This portrait is already complete.",
+    );
+  }
+  if (selected.some((row) => row.portrait_status === "RUNNING")) {
+    throw new PipelineStateError(
+      "RUN_ALREADY_ACTIVE",
+      "This portrait is already running in another request.",
+    );
+  }
+  if (selected.length === 0) {
+    throw new PipelineStateError(
+      "STEP_ALREADY_COMPLETED",
+      "All portraits are already complete.",
+    );
+  }
+  return selected;
+}
+
 export function claimPipelineStep(
   database: Database.Database,
   input: {
@@ -106,13 +186,14 @@ export function claimPipelineStep(
     step: PipelineStep;
     userId: string;
     staleRunMs: number;
+    portraitCharacterId?: string;
   },
 ): StepClaim {
   return database.transaction(() => {
-    if (!isTextPipelineStep(input.step)) {
+    if (!isImplementedPipelineStep(input.step)) {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
-        "This pipeline step is not available in M2 yet.",
+        "This pipeline step is not available in this milestone.",
       );
     }
 
@@ -153,6 +234,15 @@ export function claimPipelineStep(
       }
     }
 
+    const portraitItems =
+      input.step === "PORTRAITS"
+        ? selectPortraitItems(
+            database,
+            input.projectId,
+            input.portraitCharacterId,
+          )
+        : [];
+
     const now = new Date().toISOString();
     const runId = randomUUID();
     const attempt = row.attempt_count + 1;
@@ -183,6 +273,26 @@ export function claimPipelineStep(
       )
       .run(runId, attempt, now, now, now, input.projectId, input.step);
 
+    if (input.step === "PORTRAITS") {
+      const updatePortrait = database.prepare(
+        `
+          UPDATE characters
+          SET portrait_status = 'RUNNING',
+              portrait_active_run_id = ?,
+              portrait_attempt_count = portrait_attempt_count + 1,
+              portrait_claimed_at = ?,
+              portrait_heartbeat_at = ?,
+              portrait_error_code = NULL,
+              portrait_error_message = NULL,
+              updated_at = ?
+          WHERE project_id = ? AND id = ?
+        `,
+      );
+      portraitItems.forEach((item) => {
+        updatePortrait.run(runId, now, now, now, input.projectId, item.id);
+      });
+    }
+
     return {
       attempt,
       claimedAt: now,
@@ -203,10 +313,10 @@ export function recoverStalePipelineStep(
   },
 ): void {
   database.transaction(() => {
-    if (!isTextPipelineStep(input.step)) {
+    if (!isImplementedPipelineStep(input.step)) {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
-        "This pipeline step is not available in M2 yet.",
+        "This pipeline step is not available in this milestone.",
       );
     }
 
@@ -253,6 +363,21 @@ export function recoverStalePipelineStep(
         `,
       )
       .run(now, input.projectId, input.step, row.active_run_id);
+    if (input.step === "PORTRAITS") {
+      database
+        .prepare(
+          `
+            UPDATE characters
+            SET portrait_status = 'FAILED',
+                portrait_active_run_id = NULL,
+                portrait_error_code = 'STALE_RUN',
+                portrait_error_message = 'The previous run stopped responding. Retry this portrait.',
+                updated_at = ?
+            WHERE project_id = ? AND portrait_active_run_id = ?
+          `,
+        )
+        .run(now, input.projectId, row.active_run_id);
+    }
     database
       .prepare(
         `
@@ -284,6 +409,17 @@ function heartbeatPipelineRun(dataDir: string, claim: StepClaim): void {
         "UPDATE pipeline_runs SET heartbeat_at = ? WHERE id = ? AND status = 'RUNNING'",
       )
       .run(now, claim.runId);
+    if (claim.step === "PORTRAITS") {
+      database
+        .prepare(
+          `
+            UPDATE characters
+            SET portrait_heartbeat_at = ?, updated_at = ?
+            WHERE project_id = ? AND portrait_active_run_id = ? AND portrait_status = 'RUNNING'
+          `,
+        )
+        .run(now, now, claim.projectId, claim.runId);
+    }
   });
 }
 
@@ -490,6 +626,247 @@ function persistCharacterResult(
         );
       completePipelineRun(database, claim, now);
     })();
+  });
+}
+
+function persistPortraitSuccess(
+  dataDir: string,
+  claim: StepClaim,
+  characterId: string,
+  asset: StoredImageAsset,
+): boolean {
+  return withDatabaseAt(dataDir, (database) =>
+    database.transaction(() => {
+      const active = database
+        .prepare(
+          `
+            SELECT 1
+            FROM characters c
+            INNER JOIN project_steps ps ON ps.project_id = c.project_id
+              AND ps.step_key = 'PORTRAITS'
+            WHERE c.project_id = ?
+              AND c.id = ?
+              AND c.portrait_active_run_id = ?
+              AND c.portrait_status = 'RUNNING'
+              AND ps.active_run_id = ?
+              AND ps.status = 'RUNNING'
+          `,
+        )
+        .get(claim.projectId, characterId, claim.runId, claim.runId);
+      if (!active) return false;
+
+      const now = new Date().toISOString();
+      database
+        .prepare(
+          `
+            INSERT INTO assets
+              (id, project_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
+            VALUES (?, ?, 'PORTRAIT', ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          asset.id,
+          claim.projectId,
+          asset.storageKey,
+          asset.mimeType,
+          asset.byteSize,
+          asset.checksum,
+          now,
+          now,
+        );
+      const result = database
+        .prepare(
+          `
+            UPDATE characters
+            SET portrait_status = 'COMPLETED',
+                portrait_active_run_id = NULL,
+                portrait_heartbeat_at = ?,
+                portrait_error_code = NULL,
+                portrait_error_message = NULL,
+                portrait_asset_id = ?,
+                updated_at = ?
+            WHERE project_id = ? AND id = ? AND portrait_active_run_id = ?
+          `,
+        )
+        .run(now, asset.id, now, claim.projectId, characterId, claim.runId);
+      if (result.changes !== 1) {
+        throw new PipelineStateError(
+          "STALE_RUN",
+          "This portrait run is no longer active.",
+        );
+      }
+      return true;
+    })(),
+  );
+}
+
+function persistPortraitFailure(
+  dataDir: string,
+  claim: StepClaim,
+  characterId: string,
+  error: unknown,
+): void {
+  const code =
+    error instanceof GeminiOutputError
+      ? error.code
+      : error && typeof error === "object" && "code" in error
+        ? String((error as { code: unknown }).code)
+        : "GEMINI_FAILED";
+  const message =
+    error instanceof Error ? error.message : "Portrait generation failed.";
+
+  withDatabaseAt(dataDir, (database) => {
+    database
+      .prepare(
+        `
+          UPDATE characters
+          SET portrait_status = 'FAILED',
+              portrait_active_run_id = NULL,
+              portrait_heartbeat_at = ?,
+              portrait_error_code = ?,
+              portrait_error_message = ?,
+              updated_at = ?
+          WHERE project_id = ? AND id = ? AND portrait_active_run_id = ?
+        `,
+      )
+      .run(
+        new Date().toISOString(),
+        code,
+        message,
+        new Date().toISOString(),
+        claim.projectId,
+        characterId,
+        claim.runId,
+      );
+  });
+}
+
+function getPortraitRunInput(
+  dataDir: string,
+  claim: StepClaim,
+  characterId?: string,
+): {
+  characters: Array<{ id: string; name: string; prompt: string }>;
+  style: string;
+} {
+  return withDatabaseAt(dataDir, (database) => {
+    const project = database
+      .prepare(
+        `
+          SELECT style_text
+          FROM projects p
+          INNER JOIN project_steps ps ON ps.project_id = p.id
+          WHERE p.id = ? AND ps.step_key = 'PORTRAITS'
+            AND ps.active_run_id = ? AND ps.status = 'RUNNING'
+        `,
+      )
+      .get(claim.projectId, claim.runId) as
+      { style_text: string | null } | undefined;
+    if (!project?.style_text) {
+      throw new PipelineStateError(
+        "STEP_ORDER",
+        "Complete Style before generating portraits.",
+      );
+    }
+
+    const characters = database
+      .prepare(
+        `
+          SELECT id, name, prompt
+          FROM characters
+          WHERE project_id = ?
+            AND portrait_active_run_id = ?
+            AND portrait_status = 'RUNNING'
+            ${characterId ? "AND id = ?" : ""}
+          ORDER BY position ASC
+        `,
+      )
+      .all(
+        ...(characterId
+          ? [claim.projectId, claim.runId, characterId]
+          : [claim.projectId, claim.runId]),
+      ) as Array<{ id: string; name: string; prompt: string }>;
+    if (characters.length === 0) {
+      throw new PipelineStateError(
+        "STALE_RUN",
+        "No active portrait items remain for this run.",
+      );
+    }
+    return { characters, style: project.style_text };
+  });
+}
+
+async function executePortraits(
+  dataDir: string,
+  claim: StepClaim,
+  characterId: string | undefined,
+  adapter: GeminiImageAdapter,
+): Promise<void> {
+  const input = getPortraitRunInput(dataDir, claim, characterId);
+  const results = await Promise.allSettled(
+    input.characters.map(async (character) => {
+      let asset: StoredImageAsset | undefined;
+      try {
+        const generated = await adapter.generatePortrait({
+          characterName: character.name,
+          characterPrompt: character.prompt,
+          style: input.style,
+        });
+        assertPipelineRunActive(dataDir, claim);
+        asset = writeImageAsset(dataDir, generated);
+        const persisted = persistPortraitSuccess(
+          dataDir,
+          claim,
+          character.id,
+          asset,
+        );
+        if (!persisted) {
+          removeImageAsset(asset);
+          throw new PipelineStateError(
+            "STALE_RUN",
+            "This portrait run is no longer active.",
+          );
+        }
+        heartbeatPipelineRun(dataDir, claim);
+      } catch (error) {
+        if (asset) removeImageAsset(asset);
+        persistPortraitFailure(dataDir, claim, character.id, error);
+        throw error;
+      }
+    }),
+  );
+
+  const hasFailures = results.some((result) => result.status === "rejected");
+  if (hasFailures) {
+    failPipelineRun(
+      dataDir,
+      claim,
+      new PipelineStateError(
+        "PORTRAIT_PARTIAL_FAILURE",
+        "One or more portraits failed. Retry the failed portraits.",
+      ),
+    );
+    return;
+  }
+
+  withDatabaseAt(dataDir, (database) => {
+    const incomplete = database
+      .prepare(
+        "SELECT 1 FROM characters WHERE project_id = ? AND portrait_status != 'COMPLETED' LIMIT 1",
+      )
+      .get(claim.projectId);
+    if (incomplete) {
+      failPipelineRun(
+        dataDir,
+        claim,
+        new PipelineStateError(
+          "PORTRAIT_PARTIAL_FAILURE",
+          "Some portraits still need attention.",
+        ),
+      );
+      return;
+    }
+    completePipelineRun(database, claim, new Date().toISOString());
   });
 }
 
@@ -708,17 +1085,19 @@ export async function executePipelineRun(input: {
   requestedStyle?: string;
   staleRunMs: number;
   adapter?: GeminiTextAdapter;
+  imageAdapter?: GeminiImageAdapter;
+  portraitCharacterId?: string;
 }): Promise<void> {
   try {
-    const adapter =
-      input.adapter ??
-      createGeminiTextAdapter(
-        loadServerEnv({
-          requireGeminiKey: true,
-          requireTextModel: true,
-        }),
-      );
     if (input.claim.step === "STYLE") {
+      const adapter =
+        input.adapter ??
+        createGeminiTextAdapter(
+          loadServerEnv({
+            requireGeminiKey: true,
+            requireTextModel: true,
+          }),
+        );
       await executeStyle(
         input.dataDir,
         input.claim,
@@ -726,11 +1105,34 @@ export async function executePipelineRun(input: {
         adapter,
       );
     } else if (input.claim.step === "CHARACTERS") {
+      const adapter =
+        input.adapter ??
+        createGeminiTextAdapter(
+          loadServerEnv({
+            requireGeminiKey: true,
+            requireTextModel: true,
+          }),
+        );
       await executeCharacters(input.dataDir, input.claim, adapter);
+    } else if (input.claim.step === "PORTRAITS") {
+      const adapter =
+        input.imageAdapter ??
+        createGeminiImageAdapter(
+          loadServerEnv({
+            requireGeminiKey: true,
+            requireImageModel: true,
+          }),
+        );
+      await executePortraits(
+        input.dataDir,
+        input.claim,
+        input.portraitCharacterId,
+        adapter,
+      );
     } else {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
-        "This pipeline step is not available in M2 yet.",
+        "This pipeline step is not available in this milestone.",
       );
     }
   } catch (error) {
@@ -744,6 +1146,8 @@ export function startPipelineRun(input: {
   requestedStyle?: string;
   staleRunMs: number;
   adapter?: GeminiTextAdapter;
+  imageAdapter?: GeminiImageAdapter;
+  portraitCharacterId?: string;
 }): void {
   void executePipelineRun(input);
 }

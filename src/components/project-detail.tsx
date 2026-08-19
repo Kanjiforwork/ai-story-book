@@ -4,9 +4,9 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 
 import {
+  IMPLEMENTED_PIPELINE_STEPS,
   PIPELINE_STEP_LABELS,
-  TEXT_PIPELINE_STEPS,
-  isTextPipelineStep,
+  isImplementedPipelineStep,
 } from "@/domain/pipeline";
 import type { ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
@@ -35,20 +35,24 @@ export function ProjectDetail({
     null,
   );
   const [actionError, setActionError] = useState<string | null>(null);
-  const textSteps = project.steps.filter((step) =>
-    isTextPipelineStep(step.key),
+  const [retryingCharacterId, setRetryingCharacterId] = useState<string | null>(
+    null,
+  );
+  const implementedSteps = project.steps.filter((step) =>
+    isImplementedPipelineStep(step.key),
   );
   const currentStep =
-    textSteps.find((step) => step.status !== "COMPLETED") ?? null;
-  const textPipelineComplete =
-    textSteps.length === TEXT_PIPELINE_STEPS.length &&
-    textSteps.every((step) => step.status === "COMPLETED");
+    implementedSteps.find((step) => step.status !== "COMPLETED") ?? null;
+  const implementedPipelineComplete =
+    implementedSteps.length === IMPLEMENTED_PIPELINE_STEPS.length &&
+    implementedSteps.every((step) => step.status === "COMPLETED");
   const shouldPoll = project.steps.some(
     (step) =>
-      isTextPipelineStep(step.key) &&
+      isImplementedPipelineStep(step.key) &&
       step.status === "RUNNING" &&
       !step.run.isStale,
   );
+  const portraitStep = project.steps.find((step) => step.key === "PORTRAITS");
 
   async function refreshProject() {
     try {
@@ -127,6 +131,31 @@ export function ProjectDetail({
     }
   }
 
+  async function retryPortrait(characterId: string) {
+    setRetryingCharacterId(characterId);
+    setPendingAction("run");
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${project.id}/portraits/${characterId}/retry`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        setActionError(
+          payload.message ?? "This portrait could not be retried.",
+        );
+        return;
+      }
+      await refreshProject();
+    } catch {
+      setActionError("The server could not be reached. Try again.");
+    } finally {
+      setRetryingCharacterId(null);
+      setPendingAction(null);
+    }
+  }
+
   return (
     <AppShell user={user}>
       <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8 sm:py-14">
@@ -199,7 +228,9 @@ export function ProjectDetail({
                         ? "Running"
                         : step.status === "FAILED"
                           ? "Needs attention"
-                          : "Pending"}
+                          : isImplementedPipelineStep(step.key)
+                            ? "Pending"
+                            : "Locked in this milestone"}
                 </p>
               </li>
             ))}
@@ -215,11 +246,19 @@ export function ProjectDetail({
             onStyleDraftChange={setStyleDraft}
             pending={pendingAction !== null}
             styleDraft={styleDraft}
-            textPipelineComplete={textPipelineComplete}
+            implementedPipelineComplete={implementedPipelineComplete}
           />
         </div>
 
-        <CharacterGrid characters={project.characters} />
+        <CharacterGrid
+          characters={project.characters}
+          onRetry={
+            portraitStep?.status === "FAILED" && !portraitStep.run.isStale
+              ? retryPortrait
+              : undefined
+          }
+          retryingCharacterId={retryingCharacterId}
+        />
 
         <div className="mt-10 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
           <section
