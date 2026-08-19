@@ -286,9 +286,16 @@ This is a focused UX fix slice before handoff. It addresses observed trust, layo
 
 #### P1 — Reveal new results without stealing the page
 
-- When a user-started run first creates a result or image, scroll once to the relevant result section using smooth motion unless reduced motion is enabled.
-- Do not scroll on every poll or when the user is already reading elsewhere. If the user has moved away, show a small `New result ready · View` anchor instead.
-- Acceptance: the first portrait, chapter result, and final illustration are discoverable immediately after they arrive, while manual scrolling remains stable.
+- Never scroll the document automatically after polling or result creation. Users keep control of their reading position while the server view updates.
+- Keep result sections in a predictable order and expose honest item-level progress so newly saved work is discoverable without moving focus or changing the viewport.
+- Acceptance: portraits, chapter results, and the final illustration render from the latest server view without calling `scrollIntoView`, `window.scrollTo`, or an equivalent API.
+
+#### P1 — Keep the detail page compact
+
+- Replace the permanent full-book panel with a short source preview, character count, and `Read full text` action. Keep the complete text in a bounded accessible dialog with Escape and focus return.
+- Keep the saved style and source preview together as compact context cards so either remains available at every pipeline stage.
+- Bound portrait media near 3:4 and illustration media near 16:10 with responsive widths and stable frames; prompt content must not determine image height.
+- Acceptance: the primary workspace is scannable at 375px, 768px, 1024px, and 1440px without hiding the source, style, status, retry, or recovery paths.
 
 #### P1 — Keep prompts from resizing artwork
 
@@ -304,7 +311,7 @@ This is a focused UX fix slice before handoff. It addresses observed trust, layo
 
 #### P2 — Verify the interaction contract
 
-- Add focused component tests for running progress, item-level progress, custom-style fast path, prompt modal behavior, and result-reveal targeting.
+- Add focused component tests for the compact completed panel, source preview/full-text dialog, bounded media, running and item-level progress, prompt dialog behavior, failure/retry/stale recovery, keyboard Escape/focus return, reduced motion coverage, and the absence of automatic scrolling.
 - Manually verify the primary flow at 375px, 768px, 1024px, and 1440px, including keyboard focus, reduced motion, long prompts, slow Gemini calls, partial image failure, refresh during polling, and stale recovery.
 - Record actual commands and the manual UX checklist in `TESTING.md`; do not claim progress or visual verification without running it.
 

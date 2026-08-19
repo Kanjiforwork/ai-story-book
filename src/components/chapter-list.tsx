@@ -1,6 +1,8 @@
 import Image from "next/image";
+import { useState } from "react";
 
 import type { ChapterView } from "@/domain/project";
+import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 
 function illustrationStatusCopy(chapter: ChapterView): string {
   if (chapter.illustration.status === "COMPLETED") return "Illustration saved";
@@ -62,6 +64,10 @@ export function ChapterList({
   chapters: ChapterView[];
   readOnly?: boolean;
 }) {
+  const [selectedChapter, setSelectedChapter] = useState<ChapterView | null>(
+    null,
+  );
+
   if (chapters.length === 0) return null;
 
   return (
@@ -88,7 +94,7 @@ export function ChapterList({
             key={chapter.id}
           >
             <div className="grid lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
-              <div className="relative aspect-[16/10] overflow-hidden bg-paper lg:aspect-auto lg:min-h-[18rem]">
+              <div className="relative mx-auto aspect-[16/10] w-full max-w-[608px] overflow-hidden bg-paper">
                 {chapter.illustration.assetUrl ? (
                   <Image
                     alt={`Illustration for ${chapter.name}`}
@@ -128,14 +134,13 @@ export function ChapterList({
                     {illustrationStatusCopy(chapter)}
                   </span>
                 </div>
-                <details className="mt-4">
-                  <summary className="cursor-pointer text-sm font-semibold text-ink-body underline decoration-line underline-offset-4 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15">
-                    View illustration prompt
-                  </summary>
-                  <p className="mt-3 text-sm leading-7 text-ink-body">
-                    {chapter.prompt}
-                  </p>
-                </details>
+                <button
+                  className="mt-4 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-ink-body underline decoration-line underline-offset-4 transition hover:bg-paper hover:text-ink"
+                  onClick={() => setSelectedChapter(chapter)}
+                  type="button"
+                >
+                  View illustration prompt
+                </button>
                 {chapter.illustration.status === "FAILED" ? (
                   <p
                     className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep"
@@ -158,6 +163,15 @@ export function ChapterList({
           </article>
         ))}
       </div>
+      {selectedChapter ? (
+        <ProjectDetailDialog
+          onClose={() => setSelectedChapter(null)}
+          open
+          title={`${selectedChapter.name} illustration prompt`}
+        >
+          <p className="whitespace-pre-wrap">{selectedChapter.prompt}</p>
+        </ProjectDetailDialog>
+      ) : null}
     </section>
   );
 }

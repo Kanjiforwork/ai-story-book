@@ -1,6 +1,8 @@
 import Image from "next/image";
+import { useState } from "react";
 
 import type { CharacterView } from "@/domain/project";
+import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 
 function portraitStatusCopy(character: CharacterView): string {
   if (character.portrait.status === "COMPLETED") return "Portrait saved";
@@ -36,6 +38,9 @@ export function CharacterGrid({
   retryDisabled?: boolean;
   retryingCharacterId?: string | null;
 }) {
+  const [selectedCharacter, setSelectedCharacter] =
+    useState<CharacterView | null>(null);
+
   if (characters.length === 0) return null;
 
   const completedCount = characters.filter(
@@ -78,7 +83,7 @@ export function CharacterGrid({
               className="overflow-hidden rounded-2xl border border-line/60 bg-surface shadow-[0_10px_30px_rgba(35,31,32,0.05)]"
               key={character.id}
             >
-              <div className="relative aspect-[3/4] overflow-hidden bg-paper">
+              <div className="relative mx-auto aspect-[3/4] w-full max-w-[320px] overflow-hidden bg-paper">
                 {character.portrait.assetUrl ? (
                   <Image
                     alt={`Portrait of ${character.name}`}
@@ -118,14 +123,13 @@ export function CharacterGrid({
                     {portraitStatusCopy(character)}
                   </span>
                 </div>
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-sm font-semibold text-ink-body underline decoration-line underline-offset-4 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15">
-                    View portrait prompt
-                  </summary>
-                  <p className="mt-3 text-sm leading-6 text-ink-body">
-                    {character.prompt}
-                  </p>
-                </details>
+                <button
+                  className="mt-3 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-ink-body underline decoration-line underline-offset-4 transition hover:bg-paper hover:text-ink"
+                  onClick={() => setSelectedCharacter(character)}
+                  type="button"
+                >
+                  View portrait prompt
+                </button>
                 {failed ? (
                   <div
                     className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep"
@@ -158,6 +162,15 @@ export function CharacterGrid({
           );
         })}
       </div>
+      {selectedCharacter ? (
+        <ProjectDetailDialog
+          onClose={() => setSelectedCharacter(null)}
+          open
+          title={`${selectedCharacter.name} portrait prompt`}
+        >
+          <p className="whitespace-pre-wrap">{selectedCharacter.prompt}</p>
+        </ProjectDetailDialog>
+      ) : null}
     </section>
   );
 }

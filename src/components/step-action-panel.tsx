@@ -1,5 +1,6 @@
 import type { PipelineStep } from "@/domain/pipeline";
 import type { ProjectStepView } from "@/domain/project";
+import { useEffect, useState } from "react";
 
 const STEP_DESCRIPTIONS: Record<PipelineStep, string> = {
   STYLE: "Set the visual language.",
@@ -17,6 +18,19 @@ const RUNNING_COPY: Record<PipelineStep, string> = {
   ILLUSTRATIONS: "Generating the chapter illustration",
 };
 
+function formatElapsed(startedAt: string | null, now: number): string | null {
+  if (!startedAt) return null;
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((now - new Date(startedAt).getTime()) / 1_000),
+  );
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  return minutes > 0
+    ? `${minutes}m ${String(seconds).padStart(2, "0")}s`
+    : `${seconds}s`;
+}
+
 export function StepActionPanel({
   actionError,
   currentStep,
@@ -27,6 +41,7 @@ export function StepActionPanel({
   onStyleDraftChange,
   implementedPipelineComplete = false,
   textPipelineComplete = false,
+  itemProgress,
 }: {
   actionError: string | null;
   currentStep: ProjectStepView | null;
@@ -37,11 +52,31 @@ export function StepActionPanel({
   onStyleDraftChange: (value: string) => void;
   implementedPipelineComplete?: boolean;
   textPipelineComplete?: boolean;
+  itemProgress?: {
+    label: string;
+    saved: number;
+    total: number;
+  };
 }) {
   // Kept in the public prop shape for the untracked workspace variant; M4 now
   // treats all five steps as implemented, so the completion copy is uniform.
   void implementedPipelineComplete;
   void textPipelineComplete;
+
+  const currentStepStatus = currentStep?.status;
+  const currentStepRun = currentStep?.run;
+  const stale = currentStepStatus === "RUNNING" && currentStepRun?.isStale;
+  const running = currentStepStatus === "RUNNING" && !stale;
+  const failed = currentStepStatus === "FAILED";
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!running || !currentStepRun?.claimedAt) return;
+    const updateNow = () => setNow(Date.now());
+    updateNow();
+    const interval = window.setInterval(updateNow, 1_000);
+    return () => window.clearInterval(interval);
+  }, [currentStepRun?.claimedAt, running]);
 
   if (!currentStep) {
     return (
@@ -59,10 +94,7 @@ export function StepActionPanel({
     );
   }
 
-  const { key, run, status } = currentStep;
-  const stale = status === "RUNNING" && run.isStale;
-  const running = status === "RUNNING" && !stale;
-  const failed = status === "FAILED";
+  const { key, run } = currentStep;
 
   return (
     <section
@@ -84,9 +116,11 @@ export function StepActionPanel({
                   : `Ready for ${key.toLowerCase()}`}
           </h2>
         </div>
-        <span className="rounded-full bg-paper px-3 py-1 text-xs font-bold text-ink-body">
-          Attempt {Math.max(run.attempt, 1)}
-        </span>
+        {run.attempt > 1 ? (
+          <span className="rounded-full bg-paper px-3 py-1 text-xs font-bold text-ink-body">
+            Attempt {run.attempt}
+          </span>
+        ) : null}
       </div>
 
       {running ? (
@@ -99,6 +133,26 @@ export function StepActionPanel({
           </span>
           {RUNNING_COPY[key]}. Results save as they finish; you can leave this
           page.
+          <div className="mt-4">
+            <div
+              aria-label={`Progress while ${RUNNING_COPY[key].toLowerCase()}`}
+              className="generation-progress-track"
+              role="progressbar"
+            >
+              <span className="generation-progress-bar" />
+            </div>
+            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-orange-deep">
+              {formatElapsed(run.claimedAt, now) ? (
+                <span>Elapsed {formatElapsed(run.claimedAt, now)}</span>
+              ) : null}
+              {itemProgress ? (
+                <span>
+                  {itemProgress.saved} of {itemProgress.total}{" "}
+                  {itemProgress.label} saved
+                </span>
+              ) : null}
+            </div>
+          </div>
         </div>
       ) : stale ? (
         <div

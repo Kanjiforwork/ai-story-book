@@ -12,6 +12,7 @@ import type { GenerationRunView, ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
 import { ChapterList } from "@/components/chapter-list";
 import { CharacterGrid } from "@/components/character-grid";
+import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 import { StepActionPanel } from "@/components/step-action-panel";
 import type { AuthenticatedUser } from "@/server/auth";
 
@@ -21,6 +22,11 @@ function formatDate(value: string): string {
     month: "long",
     year: "numeric",
   });
+}
+
+function sourcePreview(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 220 ? `${compact.slice(0, 220)}…` : compact;
 }
 
 export function ProjectDetail({
@@ -40,6 +46,7 @@ export function ProjectDetail({
     null,
   );
   const [regenerating, setRegenerating] = useState(false);
+  const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   const latestRefreshId = useRef(0);
   const implementedSteps = project.steps.filter((step) =>
     isImplementedPipelineStep(step.key),
@@ -49,6 +56,26 @@ export function ProjectDetail({
   const currentStep = selectedRunReadOnly
     ? null
     : (implementedSteps.find((step) => step.status !== "COMPLETED") ?? null);
+  const portraitProgress = {
+    label: "portraits",
+    saved: project.characters.filter(
+      (character) => character.portrait.status === "COMPLETED",
+    ).length,
+    total: project.characters.length,
+  };
+  const illustrationProgress = {
+    label: "illustration",
+    saved: project.chapters.filter(
+      (chapter) => chapter.illustration.status === "COMPLETED",
+    ).length,
+    total: project.chapters.length,
+  };
+  const itemProgress =
+    currentStep?.key === "PORTRAITS" && portraitProgress.total > 0
+      ? portraitProgress
+      : currentStep?.key === "ILLUSTRATIONS" && illustrationProgress.total > 0
+        ? illustrationProgress
+        : undefined;
   const implementedPipelineComplete =
     implementedSteps.length === IMPLEMENTED_PIPELINE_STEPS.length &&
     implementedSteps.every((step) => step.status === "COMPLETED");
@@ -240,7 +267,7 @@ export function ProjectDetail({
 
   return (
     <AppShell user={user}>
-      <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8 sm:py-14">
+      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
         <Link
           className="inline-flex min-h-11 items-center rounded-lg px-2 text-sm font-semibold text-ink-body hover:bg-paper hover:text-ink"
           href="/projects"
@@ -248,14 +275,14 @@ export function ProjectDetail({
           ← Back to projects
         </Link>
 
-        <div className="mt-6 border-b border-line/60 pb-7">
+        <div className="mt-4 border-b border-line/60 pb-5">
           <p className="text-xs font-bold uppercase tracking-[0.18em] text-orange">
             Project workspace
           </p>
-          <h1 className="mt-2 text-4xl font-semibold tracking-[-0.04em]">
+          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
             {project.title}
           </h1>
-          <p className="mt-3 text-sm text-ink-muted">
+          <p className="mt-2 text-sm text-ink-muted">
             Created {formatDate(project.createdAt)} · {project.completedSteps}{" "}
             of {project.totalSteps} steps complete
           </p>
@@ -272,14 +299,14 @@ export function ProjectDetail({
         {project.generationRuns && project.generationRuns.length > 1 ? (
           <section
             aria-labelledby="runs-heading"
-            className="mt-8 rounded-3xl bg-paper p-6 sm:p-8"
+            className="mt-5 rounded-2xl bg-paper p-4 sm:p-5"
           >
             <div className="flex flex-wrap items-end justify-between gap-4">
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
                   Generation history
                 </p>
-                <h2 className="mt-2 text-2xl font-semibold" id="runs-heading">
+                <h2 className="mt-1 text-xl font-semibold" id="runs-heading">
                   Choose a saved run
                 </h2>
               </div>
@@ -287,7 +314,7 @@ export function ProjectDetail({
                 Selecting a run does not call Gemini
               </span>
             </div>
-            <div className="mt-5 grid gap-3 md:grid-cols-2">
+            <div className="mt-4 grid gap-3 md:grid-cols-2">
               {project.generationRuns.map((run) => (
                 <article
                   className="rounded-2xl border border-line/60 bg-surface p-4"
@@ -323,8 +350,8 @@ export function ProjectDetail({
           </section>
         ) : null}
 
-        <section aria-labelledby="stepper-heading" className="mt-8">
-          <div className="mb-4 flex items-center justify-between gap-4">
+        <section aria-labelledby="stepper-heading" className="mt-5">
+          <div className="mb-3 flex items-center justify-between gap-4">
             <h2 className="text-lg font-semibold" id="stepper-heading">
               Pipeline progress
             </h2>
@@ -336,18 +363,18 @@ export function ProjectDetail({
                   : "In progress"}
             </span>
           </div>
-          <ol className="grid gap-3 sm:grid-cols-5">
+          <ol className="grid grid-cols-5 gap-1.5 sm:gap-2">
             {project.steps.map((step) => (
               <li
                 aria-current={
                   currentStep?.key === step.key ? "step" : undefined
                 }
-                className={`rounded-2xl border p-4 ${currentStep?.key === step.key ? "border-orange/50 bg-orange/5" : "border-line/60 bg-surface"}`}
+                className={`min-w-0 rounded-xl border p-2.5 sm:p-3 ${currentStep?.key === step.key ? "border-orange/50 bg-orange/5" : "border-line/60 bg-surface"}`}
                 key={step.key}
               >
                 <div className="flex items-center gap-3">
                   <span
-                    className={`flex size-8 items-center justify-center rounded-full text-xs font-bold ${
+                    className={`flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold sm:size-8 sm:text-xs ${
                       step.status === "COMPLETED"
                         ? "bg-ink text-white"
                         : step.status === "RUNNING"
@@ -359,11 +386,11 @@ export function ProjectDetail({
                   >
                     {step.status === "COMPLETED" ? "✓" : step.position + 1}
                   </span>
-                  <span className="text-sm font-semibold">
+                  <span className="hidden min-w-0 truncate text-xs font-semibold sm:inline">
                     {PIPELINE_STEP_LABELS[step.key]}
                   </span>
                 </div>
-                <p className="mt-3 text-xs text-ink-muted">
+                <p className="mt-2 text-[10px] text-ink-muted sm:text-xs">
                   {step.status === "COMPLETED"
                     ? "Complete"
                     : step.status === "RUNNING" && step.run.isStale
@@ -379,13 +406,13 @@ export function ProjectDetail({
           </ol>
         </section>
 
-        <div className="mt-8">
+        <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">
           {selectedRunReadOnly ? (
-            <section className="rounded-3xl border border-line/60 bg-paper p-6 sm:p-8">
+            <section className="rounded-2xl border border-line/60 bg-paper p-5 sm:p-6">
               <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
                 Read-only history
               </p>
-              <h2 className="mt-2 text-2xl font-semibold">
+              <h2 className="mt-1 text-xl font-semibold">
                 Saved output from a previous run
               </h2>
               <p className="mt-3 text-sm leading-6 text-ink-body">
@@ -411,68 +438,51 @@ export function ProjectDetail({
               pending={pendingAction !== null}
               styleDraft={styleDraft}
               implementedPipelineComplete={implementedPipelineComplete}
+              itemProgress={itemProgress}
             />
           )}
-        </div>
+          <aside className="rounded-2xl bg-paper p-5 sm:p-6">
+            <div>
+              <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
+                Art style
+              </p>
+              <h2 className="mt-1 text-xl font-semibold">
+                {project.style ? "Saved style" : "Style not generated"}
+              </h2>
+              <p className="mt-3 text-sm leading-6 text-ink-body">
+                {project.style ??
+                  "Generate Style first. Characters will use the saved style as context."}
+              </p>
+            </div>
 
-        <CharacterGrid
-          characters={project.characters}
-          onRetry={
-            !selectedRunReadOnly &&
-            portraitStep?.status === "FAILED" &&
-            !portraitStep.run.isStale
-              ? retryPortrait
-              : undefined
-          }
-          readOnly={selectedRunReadOnly}
-          retryDisabled={pendingAction !== null}
-          retryingCharacterId={retryingCharacterId}
-        />
-
-        <ChapterList
-          chapters={project.chapters}
-          readOnly={selectedRunReadOnly}
-        />
-
-        <div className="mt-10 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
-          <section
-            aria-labelledby="book-text-heading"
-            className="rounded-3xl bg-surface p-6 shadow-[0_10px_35px_rgba(35,31,32,0.06)] sm:p-8"
-          >
-            <div className="mb-5 flex items-end justify-between gap-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-                  Source material
-                </p>
-                <h2
-                  className="mt-2 text-2xl font-semibold"
-                  id="book-text-heading"
-                >
-                  Full book text
-                </h2>
+            <div className="mt-5 border-t border-line/60 pt-5">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
+                    Source material
+                  </p>
+                  <h2 className="mt-1 text-xl font-semibold">
+                    Book text preview
+                  </h2>
+                </div>
+                <span className="shrink-0 text-right text-xs tabular-nums text-ink-muted">
+                  {project.bookText.length.toLocaleString()} chars
+                </span>
               </div>
-              <span className="text-xs text-ink-muted">
-                {project.bookText.length.toLocaleString()} characters
-              </span>
+              <p className="mt-3 text-sm italic leading-6 text-ink-body">
+                {sourcePreview(project.bookText)}
+              </p>
+              <button
+                className="mt-3 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-orange-deep underline decoration-line underline-offset-4 transition hover:bg-white"
+                onClick={() => setSourceDialogOpen(true)}
+                type="button"
+              >
+                Read full text
+              </button>
             </div>
-            <div className="max-h-[32rem] overflow-y-auto rounded-2xl border border-line/60 bg-paper p-5 text-sm leading-7 text-ink-body whitespace-pre-wrap">
-              {project.bookText}
-            </div>
-          </section>
 
-          <aside className="rounded-3xl bg-paper p-6 sm:p-8">
-            <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-              Art style
-            </p>
-            <h2 className="mt-2 text-2xl font-semibold">
-              {project.style ? "Saved style" : "Style not generated"}
-            </h2>
-            <p className="mt-4 text-sm leading-6 text-ink-body">
-              {project.style ??
-                "Generate Style first. Characters will use the saved style as context."}
-            </p>
             {!selectedRunReadOnly && currentStep?.key !== "STYLE" ? (
-              <div className="mt-6 border-t border-line/60 pt-5">
+              <div className="mt-5 border-t border-line/60 pt-5">
                 <label
                   className="block text-sm font-semibold"
                   htmlFor="regenerate-style"
@@ -499,6 +509,33 @@ export function ProjectDetail({
             ) : null}
           </aside>
         </div>
+
+        <ChapterList
+          chapters={project.chapters}
+          readOnly={selectedRunReadOnly}
+        />
+
+        <CharacterGrid
+          characters={project.characters}
+          onRetry={
+            !selectedRunReadOnly &&
+            portraitStep?.status === "FAILED" &&
+            !portraitStep.run.isStale
+              ? retryPortrait
+              : undefined
+          }
+          readOnly={selectedRunReadOnly}
+          retryDisabled={pendingAction !== null}
+          retryingCharacterId={retryingCharacterId}
+        />
+
+        <ProjectDetailDialog
+          onClose={() => setSourceDialogOpen(false)}
+          open={sourceDialogOpen}
+          title="Full book text"
+        >
+          <p className="whitespace-pre-wrap">{project.bookText}</p>
+        </ProjectDetailDialog>
       </main>
     </AppShell>
   );

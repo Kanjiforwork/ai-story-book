@@ -26,6 +26,7 @@ vi.mock("next/navigation", () => ({
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+  vi.restoreAllMocks();
   vi.useRealTimers();
 });
 
@@ -734,6 +735,193 @@ describe("foundation app shell", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: /generate characters/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps the completed state compact while retaining source access", () => {
+    const project = projectFixture();
+    project.completedSteps = 5;
+    project.status = "DONE";
+    project.steps = project.steps.map((step) => ({
+      ...step,
+      status: "COMPLETED" as const,
+    }));
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(
+      screen.getByText("All five steps are complete."),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Read full text" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Full book text")).not.toBeInTheDocument();
+  });
+
+  it("opens the full book text in a dialog and returns focus on Escape", () => {
+    const fullText =
+      "A long river story begins here. The complete source remains available without occupying the primary workspace.";
+    const project = { ...projectFixture(), bookText: fullText };
+
+    render(<ProjectDetail project={project} user={user} />);
+    const trigger = screen.getByRole("button", { name: "Read full text" });
+
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Full book text" });
+    expect(dialog).toHaveTextContent(fullText);
+    expect(screen.getByRole("button", { name: "Close dialog" })).toHaveFocus();
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("opens long prompts without changing the portrait frame or scrolling", () => {
+    const scrollIntoView = vi.fn();
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      configurable: true,
+      value: scrollIntoView,
+    });
+    const prompt =
+      "An adult mole portrait with detailed clothing, posture, warm light, and a consistent storybook palette.";
+
+    const { unmount } = render(
+      <CharacterGrid
+        characters={[
+          {
+            id: "character-1",
+            name: "Mole",
+            position: 0,
+            prompt,
+            portrait: {
+              assetId: null,
+              assetUrl: null,
+              attempt: 0,
+              claimedAt: null,
+              errorCode: null,
+              errorMessage: null,
+              heartbeatAt: null,
+              isStale: false,
+              status: "PENDING",
+            },
+          },
+        ]}
+      />,
+    );
+
+    const frame = screen
+      .getAllByText("Portrait pending")[0]
+      .closest("div.relative");
+    expect(frame).toHaveClass("max-w-[320px]");
+    const trigger = screen.getByRole("button", {
+      name: "View portrait prompt",
+    });
+    trigger.focus();
+    fireEvent.click(trigger);
+    expect(
+      screen.getByRole("dialog", { name: "Mole portrait prompt" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(prompt)).toBeInTheDocument();
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
+    expect(trigger).toHaveFocus();
+    unmount();
+  });
+
+  it("keeps image progress named and bounded while portraits run", () => {
+    const project = projectFixture();
+    project.completedSteps = 2;
+    project.status = "IN_PROGRESS";
+    project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
+    project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
+    project.steps[2] = {
+      ...project.steps[2],
+      run: {
+        ...project.steps[2].run,
+        attempt: 1,
+        claimedAt: new Date(Date.now() - 5_000).toISOString(),
+      },
+      status: "RUNNING",
+    };
+    project.characters = [
+      {
+        id: "character-1",
+        name: "Mole",
+        position: 0,
+        prompt: "An adult mole portrait prompt.",
+        portrait: {
+          assetId: "asset-1",
+          assetUrl: "/api/assets/asset-1",
+          attempt: 1,
+          claimedAt: null,
+          errorCode: null,
+          errorMessage: null,
+          heartbeatAt: null,
+          isStale: false,
+          status: "COMPLETED",
+        },
+      },
+      {
+        id: "character-2",
+        name: "Rat",
+        position: 1,
+        prompt: "An adult rat portrait prompt.",
+        portrait: {
+          assetId: null,
+          assetUrl: null,
+          attempt: 1,
+          claimedAt: null,
+          errorCode: null,
+          errorMessage: null,
+          heartbeatAt: null,
+          isStale: false,
+          status: "RUNNING",
+        },
+      },
+    ];
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    expect(
+      screen.getAllByText("1 of 2 portraits saved").length,
+    ).toBeGreaterThan(0);
+    expect(screen.getByText(/Elapsed \d+[sm]/)).toBeInTheDocument();
+  });
+
+  it("bounds chapter illustrations independently from their prompt", () => {
+    render(
+      <ChapterList
+        chapters={[
+          {
+            id: "chapter-1",
+            name: "The River",
+            position: 0,
+            prompt: "A single river scene.",
+            illustration: {
+              assetId: "asset-illustration-1",
+              assetUrl: "/api/assets/asset-illustration-1",
+              attempt: 1,
+              claimedAt: "2026-01-01T00:00:00.000Z",
+              errorCode: null,
+              errorMessage: null,
+              heartbeatAt: "2026-01-01T00:00:00.000Z",
+              isStale: false,
+              status: "COMPLETED",
+            },
+          },
+        ]}
+      />,
+    );
+
+    const image = screen.getByAltText("Illustration for The River");
+    expect(image.parentElement).toHaveClass("max-w-[608px]");
+    expect(
+      screen.getByRole("button", { name: "View illustration prompt" }),
     ).toBeInTheDocument();
   });
 });
