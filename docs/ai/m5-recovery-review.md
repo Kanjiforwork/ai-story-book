@@ -8,6 +8,7 @@
 
 - Added server-side active-claim checks immediately before external Gemini calls, closing the known stale-run race where a recovered runner could continue after its claim became invalid.
 - Added regression coverage for missing/invalid heartbeats, no-Gemini-after-recovery, malformed output, chapter caps, failed-only retries, upstream preservation, asset ownership/backing-file checks, and restart read-back.
+- Added a regression for long in-flight Gemini calls so periodic heartbeats prevent false stale recovery while the run is still active.
 - Added frontend assertions for running/stale copy, failed illustration progress, private asset URLs, and polling response ordering.
 - Reviewed the production-shaped UI at 375px and desktop width. No horizontal overflow was observed; the workspace retained real controls, labels, and visible focus treatment.
 

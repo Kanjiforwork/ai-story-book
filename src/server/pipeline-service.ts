@@ -534,6 +534,28 @@ function heartbeatPipelineRun(dataDir: string, claim: StepClaim): void {
   });
 }
 
+async function runWithPipelineHeartbeat<T>(
+  dataDir: string,
+  claim: StepClaim,
+  staleRunMs: number,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const intervalMs = Math.max(50, Math.floor(staleRunMs / 3));
+  const heartbeatTimer = setInterval(() => {
+    try {
+      heartbeatPipelineRun(dataDir, claim);
+    } catch {
+      // The operation's final active-run check remains authoritative.
+    }
+  }, intervalMs);
+
+  try {
+    return await operation();
+  } finally {
+    clearInterval(heartbeatTimer);
+  }
+}
+
 function assertPipelineRunActive(dataDir: string, claim: StepClaim): void {
   const active = withDatabaseAt(dataDir, (database) =>
     database
@@ -1298,17 +1320,25 @@ async function executePortraits(
   claim: StepClaim,
   characterId: string | undefined,
   adapter: GeminiImageAdapter,
+  staleRunMs: number,
 ): Promise<void> {
   const input = getPortraitRunInput(dataDir, claim, characterId);
   const results = await Promise.allSettled(
     input.characters.map(async (character) => {
       let asset: StoredImageAsset | undefined;
       try {
-        const generated = await adapter.generatePortrait({
-          characterName: character.name,
-          characterPrompt: character.prompt,
-          style: input.style,
-        });
+        assertPipelineRunActive(dataDir, claim);
+        const generated = await runWithPipelineHeartbeat(
+          dataDir,
+          claim,
+          staleRunMs,
+          () =>
+            adapter.generatePortrait({
+              characterName: character.name,
+              characterPrompt: character.prompt,
+              style: input.style,
+            }),
+        );
         assertPipelineRunActive(dataDir, claim);
         asset = writeImageAsset(dataDir, generated);
         const persisted = persistPortraitSuccess(
@@ -1371,6 +1401,7 @@ async function executeChapters(
   dataDir: string,
   claim: StepClaim,
   adapter: GeminiTextAdapter,
+  staleRunMs: number,
 ): Promise<void> {
   const input = getChapterRunInput(dataDir, claim);
   const previousInteractionId = withDatabaseAt(
@@ -1395,11 +1426,18 @@ async function executeChapters(
     );
   }
 
-  const interaction = await adapter.createTextInteraction({
-    previousInteractionId,
-    prompt: buildChapterPrompt(input),
-    responseFormat: CHAPTER_RESPONSE_FORMAT,
-  });
+  assertPipelineRunActive(dataDir, claim);
+  const interaction = await runWithPipelineHeartbeat(
+    dataDir,
+    claim,
+    staleRunMs,
+    () =>
+      adapter.createTextInteraction({
+        previousInteractionId,
+        prompt: buildChapterPrompt(input),
+        responseFormat: CHAPTER_RESPONSE_FORMAT,
+      }),
+  );
   heartbeatPipelineRun(dataDir, claim);
   const chapters = parseGeneratedChapters(interaction.outputText);
   persistChapterResult(dataDir, claim, {
@@ -1414,16 +1452,24 @@ async function executeIllustrations(
   dataDir: string,
   claim: StepClaim,
   adapter: GeminiImageAdapter,
+  staleRunMs: number,
 ): Promise<void> {
   const input = getIllustrationRunInput(dataDir, claim);
   let asset: StoredImageAsset | undefined;
   try {
-    const generated = await adapter.generateIllustration({
-      chapterName: input.chapter.name,
-      chapterPrompt: input.chapter.prompt,
-      portraitReferences: input.portraitReferences,
-      style: input.style,
-    });
+    assertPipelineRunActive(dataDir, claim);
+    const generated = await runWithPipelineHeartbeat(
+      dataDir,
+      claim,
+      staleRunMs,
+      () =>
+        adapter.generateIllustration({
+          chapterName: input.chapter.name,
+          chapterPrompt: input.chapter.prompt,
+          portraitReferences: input.portraitReferences,
+          style: input.style,
+        }),
+    );
     assertPipelineRunActive(dataDir, claim);
     asset = writeImageAsset(dataDir, generated);
     const persisted = persistIllustrationSuccess(
@@ -1587,6 +1633,7 @@ async function ensureBookContext(
   dataDir: string,
   claim: StepClaim,
   adapter: GeminiTextAdapter,
+  staleRunMs: number,
 ): Promise<string> {
   const project = withDatabaseAt(
     dataDir,
@@ -1613,8 +1660,11 @@ async function ensureBookContext(
   let fileUri = project.gemini_file_uri;
   if (!fileName || !fileUri) {
     assertPipelineRunActive(dataDir, claim);
-    const uploaded = await adapter.uploadBook(
-      resolveBookPath(dataDir, project.book_text_key),
+    const uploaded = await runWithPipelineHeartbeat(
+      dataDir,
+      claim,
+      staleRunMs,
+      () => adapter.uploadBook(resolveBookPath(dataDir, project.book_text_key)),
     );
     assertPipelineRunActive(dataDir, claim);
     fileName = uploaded.name;
@@ -1626,7 +1676,12 @@ async function ensureBookContext(
   let contextInteractionId = project.gemini_context_interaction_id;
   if (!contextInteractionId) {
     assertPipelineRunActive(dataDir, claim);
-    const context = await adapter.createBookContext(fileUri);
+    const context = await runWithPipelineHeartbeat(
+      dataDir,
+      claim,
+      staleRunMs,
+      () => adapter.createBookContext(fileUri),
+    );
     assertPipelineRunActive(dataDir, claim);
     contextInteractionId = context.id;
     persistGeminiContext(dataDir, claim, {
@@ -1648,16 +1703,28 @@ async function executeStyle(
   claim: StepClaim,
   requestedStyle: string,
   adapter: GeminiTextAdapter,
+  staleRunMs: number,
 ): Promise<void> {
-  const contextInteractionId = await ensureBookContext(dataDir, claim, adapter);
+  const contextInteractionId = await ensureBookContext(
+    dataDir,
+    claim,
+    adapter,
+    staleRunMs,
+  );
   const prompt = requestedStyle
     ? `The art style is: "${requestedStyle}". Store it as the canonical visual language for all future prompts. Reply only "Style saved."`
     : "Define an art style that fits the story with a distinctive twist. Return only the art-style prompt that should be applied to future illustration prompts.";
   assertPipelineRunActive(dataDir, claim);
-  const interaction = await adapter.createTextInteraction({
-    previousInteractionId: contextInteractionId,
-    prompt,
-  });
+  const interaction = await runWithPipelineHeartbeat(
+    dataDir,
+    claim,
+    staleRunMs,
+    () =>
+      adapter.createTextInteraction({
+        previousInteractionId: contextInteractionId,
+        prompt,
+      }),
+  );
   heartbeatPipelineRun(dataDir, claim);
   const style = requestedStyle || parseGeneratedStyle(interaction.outputText);
   persistStyleResult(dataDir, claim, {
@@ -1672,6 +1739,7 @@ async function executeCharacters(
   dataDir: string,
   claim: StepClaim,
   adapter: GeminiTextAdapter,
+  staleRunMs: number,
 ): Promise<void> {
   const previousInteractionId = withDatabaseAt(
     dataDir,
@@ -1696,12 +1764,18 @@ async function executeCharacters(
   }
 
   assertPipelineRunActive(dataDir, claim);
-  const interaction = await adapter.createTextInteraction({
-    previousInteractionId,
-    prompt:
-      "Describe the main characters, adults only. Return at most two characters. Each character must be an adult and must include a detailed image-generation prompt of at least 50 words. Keep the established art style. Return only the requested JSON array.",
-    responseFormat: CHARACTER_RESPONSE_FORMAT,
-  });
+  const interaction = await runWithPipelineHeartbeat(
+    dataDir,
+    claim,
+    staleRunMs,
+    () =>
+      adapter.createTextInteraction({
+        previousInteractionId,
+        prompt:
+          "Describe the main characters, adults only. Return at most two characters. Each character must be an adult and must include a detailed image-generation prompt of at least 50 words. Keep the established art style. Return only the requested JSON array.",
+        responseFormat: CHARACTER_RESPONSE_FORMAT,
+      }),
+  );
   heartbeatPipelineRun(dataDir, claim);
   const characters = parseGeneratedCharacters(interaction.outputText);
   persistCharacterResult(dataDir, claim, {
@@ -1736,6 +1810,7 @@ export async function executePipelineRun(input: {
         input.claim,
         normalizeOptionalStyle(input.requestedStyle),
         adapter,
+        input.staleRunMs,
       );
     } else if (input.claim.step === "CHARACTERS") {
       const adapter =
@@ -1746,7 +1821,12 @@ export async function executePipelineRun(input: {
             requireTextModel: true,
           }),
         );
-      await executeCharacters(input.dataDir, input.claim, adapter);
+      await executeCharacters(
+        input.dataDir,
+        input.claim,
+        adapter,
+        input.staleRunMs,
+      );
     } else if (input.claim.step === "PORTRAITS") {
       const adapter =
         input.imageAdapter ??
@@ -1761,6 +1841,7 @@ export async function executePipelineRun(input: {
         input.claim,
         input.portraitCharacterId,
         adapter,
+        input.staleRunMs,
       );
     } else if (input.claim.step === "CHAPTERS") {
       const adapter =
@@ -1771,7 +1852,12 @@ export async function executePipelineRun(input: {
             requireTextModel: true,
           }),
         );
-      await executeChapters(input.dataDir, input.claim, adapter);
+      await executeChapters(
+        input.dataDir,
+        input.claim,
+        adapter,
+        input.staleRunMs,
+      );
     } else if (input.claim.step === "ILLUSTRATIONS") {
       const adapter =
         input.imageAdapter ??
@@ -1781,7 +1867,12 @@ export async function executePipelineRun(input: {
             requireImageModel: true,
           }),
         );
-      await executeIllustrations(input.dataDir, input.claim, adapter);
+      await executeIllustrations(
+        input.dataDir,
+        input.claim,
+        adapter,
+        input.staleRunMs,
+      );
     } else {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",

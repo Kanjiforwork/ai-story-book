@@ -72,6 +72,7 @@ export function ProjectDetail({
         setActionError(payload.message ?? "We could not refresh this project.");
         return;
       }
+      setActionError(null);
       setProject(payload.project);
     } catch {
       if (refreshId !== latestRefreshId.current) return;
@@ -261,6 +262,7 @@ export function ProjectDetail({
               ? retryPortrait
               : undefined
           }
+          retryDisabled={pendingAction !== null}
           retryingCharacterId={retryingCharacterId}
         />
 

@@ -2,7 +2,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createUserSession } from "@/server/auth";
 import { createProject, getProjectDetail } from "@/server/project-service";
@@ -355,6 +355,69 @@ describe("pipeline claims and recovery", () => {
     });
 
     expect(geminiCalls).toBe(0);
+  });
+
+  it("keeps a long Gemini call fresh with persisted heartbeats", async () => {
+    vi.useFakeTimers();
+    try {
+      const { database, dataDir, project, user } = createFixture();
+      const claim = claimPipelineStep(database, {
+        projectId: project.id,
+        staleRunMs: 1_000,
+        step: "STYLE",
+        userId: user.id,
+      });
+      database.close();
+
+      let resolveStyle!: (value: { id: string; outputText: string }) => void;
+      const styleInteraction = new Promise<{
+        id: string;
+        outputText: string;
+      }>((resolve) => {
+        resolveStyle = resolve;
+      });
+      const adapter: GeminiTextAdapter = {
+        modelId: "gemini-3.6-flash",
+        uploadBook: async () => ({
+          mimeType: "text/plain",
+          name: "files/book-1",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/book-1",
+        }),
+        createBookContext: async () => ({
+          id: "interaction-book",
+          outputText: "context stored",
+        }),
+        createTextInteraction: async () => styleInteraction,
+      };
+
+      const execution = executePipelineRun({
+        adapter,
+        claim,
+        dataDir,
+        staleRunMs: 1_000,
+      });
+      await vi.advanceTimersByTimeAsync(400);
+
+      const inFlightDatabase = openDatabase(dataDir);
+      const inFlight = getProjectDetail(
+        inFlightDatabase,
+        user.id,
+        project.id,
+        dataDir,
+        1_000,
+      );
+      expect(inFlight?.steps[0].run.isStale).toBe(false);
+      expect(inFlight?.steps[0].run.heartbeatAt).not.toBe(claim.claimedAt);
+      inFlightDatabase.close();
+
+      resolveStyle({
+        id: "interaction-style",
+        outputText: "Warm painted watercolour.",
+      });
+      await execution;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

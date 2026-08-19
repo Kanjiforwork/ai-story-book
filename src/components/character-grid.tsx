@@ -26,10 +26,12 @@ function portraitStatusClass(character: CharacterView): string {
 export function CharacterGrid({
   characters,
   onRetry,
+  retryDisabled = false,
   retryingCharacterId,
 }: {
   characters: CharacterView[];
   onRetry?: (characterId: string) => void;
+  retryDisabled?: boolean;
   retryingCharacterId?: string | null;
 }) {
   if (characters.length === 0) return null;
@@ -112,9 +114,14 @@ export function CharacterGrid({
                     {portraitStatusCopy(character)}
                   </span>
                 </div>
-                <p className="mt-3 text-sm leading-6 text-ink-body">
-                  {character.prompt}
-                </p>
+                <details className="mt-3">
+                  <summary className="cursor-pointer text-sm font-semibold text-ink-body underline decoration-line underline-offset-4 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15">
+                    View portrait prompt
+                  </summary>
+                  <p className="mt-3 text-sm leading-6 text-ink-body">
+                    {character.prompt}
+                  </p>
+                </details>
                 {failed ? (
                   <div
                     className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep"
@@ -127,7 +134,7 @@ export function CharacterGrid({
                     {onRetry ? (
                       <button
                         className="mt-3 inline-flex min-h-11 items-center rounded-xl bg-orange px-4 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-orange-hover disabled:cursor-wait disabled:opacity-60"
-                        disabled={retrying}
+                        disabled={retrying || retryDisabled}
                         onClick={() => onRetry(character.id)}
                         type="button"
                       >

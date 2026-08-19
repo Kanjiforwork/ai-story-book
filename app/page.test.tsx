@@ -229,6 +229,63 @@ describe("foundation app shell", () => {
     );
   });
 
+  it("disables portrait retries while another retry action is pending", () => {
+    const retry = vi.fn();
+    render(
+      <CharacterGrid
+        characters={[
+          {
+            id: "character-1",
+            name: "Mole",
+            position: 0,
+            prompt: "An adult mole portrait prompt.",
+            portrait: {
+              assetId: null,
+              assetUrl: null,
+              attempt: 1,
+              claimedAt: "2026-01-01T00:00:00.000Z",
+              errorCode: "GEMINI_FAILED",
+              errorMessage: "Mole failed.",
+              heartbeatAt: "2026-01-01T00:00:00.000Z",
+              isStale: false,
+              status: "FAILED",
+            },
+          },
+          {
+            id: "character-2",
+            name: "Rat",
+            position: 1,
+            prompt: "An adult rat portrait prompt.",
+            portrait: {
+              assetId: null,
+              assetUrl: null,
+              attempt: 1,
+              claimedAt: "2026-01-01T00:00:00.000Z",
+              errorCode: "GEMINI_FAILED",
+              errorMessage: "Rat failed.",
+              heartbeatAt: "2026-01-01T00:00:00.000Z",
+              isStale: false,
+              status: "FAILED",
+            },
+          },
+        ]}
+        onRetry={retry}
+        retryDisabled
+        retryingCharacterId="character-1"
+      />,
+    );
+
+    expect(
+      screen.getAllByRole("button", { name: /Retry portrait|Retrying/ }),
+    ).toHaveLength(2);
+    expect(
+      screen
+        .getAllByRole("button", { name: /Retry portrait|Retrying/ })
+        .every((button) => (button as HTMLButtonElement).disabled),
+    ).toBe(true);
+    expect(retry).not.toHaveBeenCalled();
+  });
+
   it("renders private illustration assets without the Next image optimizer", () => {
     render(
       <ChapterList
@@ -282,7 +339,7 @@ describe("foundation app shell", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/progress is saved on the server/i),
+      screen.getByText(/results save as they finish/i),
     ).toBeInTheDocument();
     unmount();
 
@@ -304,7 +361,7 @@ describe("foundation app shell", () => {
       screen.getByRole("button", { name: "Recover run" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /recover it first; completed earlier work is untouched/i,
+      /recover it to continue; saved work is safe/i,
     );
   });
 
@@ -408,5 +465,57 @@ describe("foundation app shell", () => {
     expect(
       screen.queryByRole("button", { name: /generate style/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("clears a transient refresh error after a later poll succeeds", async () => {
+    vi.useFakeTimers();
+    const initial = projectFixture();
+    initial.steps[0] = {
+      ...initial.steps[0],
+      run: {
+        ...initial.steps[0].run,
+        attempt: 1,
+        claimedAt: "2026-01-01T00:00:00.000Z",
+        heartbeatAt: "2026-01-01T00:00:00.000Z",
+      },
+      status: "RUNNING",
+    };
+    const completed = {
+      ...initial,
+      completedSteps: 1,
+      status: "IN_PROGRESS" as const,
+      steps: initial.steps.map((step, index) =>
+        index === 0 ? { ...step, status: "COMPLETED" as const } : step,
+      ),
+      style: "Warm painted watercolour.",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        json: async () => ({ message: "Temporary refresh failure." }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({ project: completed }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProjectDetail project={initial} user={user} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_500);
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Temporary refresh failure.",
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_500);
+    });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /generate characters/i }),
+    ).toBeInTheDocument();
   });
 });

@@ -117,9 +117,14 @@ export function ChapterList({ chapters }: { chapters: ChapterView[] }) {
                     {illustrationStatusCopy(chapter)}
                   </span>
                 </div>
-                <p className="mt-4 text-sm leading-7 text-ink-body">
-                  {chapter.prompt}
-                </p>
+                <details className="mt-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-ink-body underline decoration-line underline-offset-4 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15">
+                    View illustration prompt
+                  </summary>
+                  <p className="mt-3 text-sm leading-7 text-ink-body">
+                    {chapter.prompt}
+                  </p>
+                </details>
                 {chapter.illustration.status === "FAILED" ? (
                   <p
                     className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep"

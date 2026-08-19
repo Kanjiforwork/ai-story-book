@@ -2,13 +2,11 @@ import type { PipelineStep } from "@/domain/pipeline";
 import type { ProjectStepView } from "@/domain/project";
 
 const STEP_DESCRIPTIONS: Record<PipelineStep, string> = {
-  STYLE: "Set a visual language for every illustration in this project.",
-  CHARACTERS: "Find the main adult characters and prepare portrait prompts.",
-  PORTRAITS: "Create one saved 3:4 portrait for each adult character.",
-  CHAPTERS:
-    "Write one chapter illustration prompt using the saved characters and portraits.",
-  ILLUSTRATIONS:
-    "Create one scene illustration using the saved chapter and portraits.",
+  STYLE: "Set the visual language.",
+  CHARACTERS: "Find the adult characters.",
+  PORTRAITS: "Create a portrait for each character.",
+  CHAPTERS: "Write one scene prompt.",
+  ILLUSTRATIONS: "Create the chapter scene.",
 };
 
 const RUNNING_COPY: Record<PipelineStep, string> = {
@@ -52,11 +50,10 @@ export function StepActionPanel({
           <span className="flex size-8 items-center justify-center rounded-full bg-ink text-white">
             ✓
           </span>
-          All five pipeline steps are complete.
+          All five steps are complete.
         </div>
         <p className="mt-4 text-sm leading-6 text-ink-body">
-          Nothing regenerates automatically. Your generated results remain saved
-          when you return.
+          Results are saved and ready to revisit.
         </p>
       </section>
     );
@@ -100,16 +97,15 @@ export function StepActionPanel({
           <span aria-hidden="true" className="mr-3 inline-block animate-spin">
             ◌
           </span>
-          {RUNNING_COPY[key]}. You can leave this page; progress is saved on the
-          server.
+          {RUNNING_COPY[key]}. Results save as they finish; you can leave this
+          page.
         </div>
       ) : stale ? (
         <div
           className="mt-6 rounded-2xl border border-orange/30 bg-orange/10 px-4 py-4 text-sm leading-6 text-orange-deep"
           role="alert"
         >
-          This run stopped responding. Recover it first; completed earlier work
-          is untouched.
+          This run stopped. Recover it to continue; saved work is safe.
           <button
             className="mt-4 inline-flex min-h-11 items-center rounded-xl border border-orange-deep px-4 text-sm font-bold text-orange-deep transition hover:bg-orange-deep hover:text-white"
             disabled={pending}

@@ -14,7 +14,7 @@ Commands were run sequentially from `/Users/bao/GitHub/ai-story-book`.
 
 ```text
 Test Files  13 passed (13)
-Tests       49 passed (49)
+Tests       52 passed (52)
 ```
 
 ### `npm run check`
@@ -66,6 +66,7 @@ Covered by automated tests unless marked otherwise:
 - Duplicate request/double-click and a second concurrent claim are rejected by the atomic claim.
 - The persisted run ID is written to both the step and run record.
 - Old, missing, and invalid heartbeats are considered stale.
+- A long in-flight Gemini call refreshes its persisted heartbeat and does not become falsely stale.
 - Recovering a stale run prevents the old runner from making a Gemini call in the checked race path.
 - Explicit retry creates a new run and increments the attempt.
 - Portrait partial success preserves completed assets.
