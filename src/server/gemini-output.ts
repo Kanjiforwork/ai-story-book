@@ -6,6 +6,11 @@ export type GeneratedCharacter = {
   prompt: string;
 };
 
+export type GeneratedChapter = {
+  name: string;
+  prompt: string;
+};
+
 export const CHARACTER_RESPONSE_FORMAT = {
   type: "text",
   mime_type: "application/json",
@@ -22,6 +27,25 @@ export const CHARACTER_RESPONSE_FORMAT = {
         age_group: { type: "string", enum: ["adult"] },
       },
       required: ["name", "prompt", "age_group"],
+    },
+  },
+} as const;
+
+export const CHAPTER_RESPONSE_FORMAT = {
+  type: "text",
+  mime_type: "application/json",
+  schema: {
+    type: "array",
+    minItems: 1,
+    maxItems: PIPELINE_LIMITS.chapters,
+    items: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        name: { type: "string" },
+        prompt: { type: "string" },
+      },
+      required: ["name", "prompt"],
     },
   },
 } as const;
@@ -96,5 +120,47 @@ export function parseGeneratedCharacters(value: string): GeneratedCharacter[] {
     }
 
     return { ageGroup: "adult", name, prompt };
+  });
+}
+
+export function parseGeneratedChapters(value: string): GeneratedChapter[] {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch (error) {
+    throw new GeminiOutputError("Gemini returned invalid chapter JSON.", {
+      cause: error,
+    });
+  }
+
+  if (!Array.isArray(parsed) || parsed.length === 0) {
+    throw new GeminiOutputError("Gemini returned no chapter prompts.");
+  }
+  if (parsed.length > PIPELINE_LIMITS.chapters) {
+    throw new GeminiOutputError(
+      `Gemini returned more than ${PIPELINE_LIMITS.chapters} chapter.`,
+    );
+  }
+
+  return parsed.map((item, index) => {
+    if (!item || typeof item !== "object") {
+      throw new GeminiOutputError(`Chapter ${index + 1} is not an object.`);
+    }
+
+    const record = item as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    const prompt =
+      typeof record.prompt === "string" ? record.prompt.trim() : "";
+
+    if (!name || name.length > 120) {
+      throw new GeminiOutputError(`Chapter ${index + 1} has an invalid name.`);
+    }
+    if (!prompt || prompt.length > 8_000) {
+      throw new GeminiOutputError(
+        `Chapter ${index + 1} has an invalid illustration prompt.`,
+      );
+    }
+
+    return { name, prompt };
   });
 }

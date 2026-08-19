@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 
 import type Database from "better-sqlite3";
 
@@ -13,7 +14,9 @@ import { normalizeOptionalStyle } from "@/domain/validation";
 import { loadServerEnv } from "@/server/env";
 import {
   CHARACTER_RESPONSE_FORMAT,
+  CHAPTER_RESPONSE_FORMAT,
   GeminiOutputError,
+  parseGeneratedChapters,
   parseGeneratedCharacters,
   parseGeneratedStyle,
 } from "@/server/gemini-output";
@@ -28,9 +31,11 @@ import {
 import { resolveBookPath } from "@/server/book-text";
 import {
   removeImageAsset,
+  getProjectAssetFile,
   writeImageAsset,
   type StoredImageAsset,
 } from "@/server/asset-service";
+import type { PortraitReference } from "@/server/gemini-image";
 import { openDatabase } from "@/server/storage";
 
 type PipelineStateCode =
@@ -72,6 +77,12 @@ type PortraitSelectionRow = {
   id: string;
   portrait_active_run_id: string | null;
   portrait_status: "PENDING" | "RUNNING" | "FAILED" | "COMPLETED";
+};
+
+type IllustrationSelectionRow = {
+  id: string;
+  illustration_active_run_id: string | null;
+  illustration_status: "PENDING" | "RUNNING" | "FAILED" | "COMPLETED";
 };
 
 function getStepRow(
@@ -179,6 +190,56 @@ function selectPortraitItems(
   return selected;
 }
 
+function selectIllustrationItems(
+  database: Database.Database,
+  projectId: string,
+): IllustrationSelectionRow[] {
+  const rows = database
+    .prepare(
+      `
+        SELECT id, illustration_active_run_id, illustration_status
+        FROM chapters
+        WHERE project_id = ?
+        ORDER BY position ASC
+      `,
+    )
+    .all(projectId) as IllustrationSelectionRow[];
+
+  try {
+    assertPipelineCaps({ adultCharacterCount: 0, chapterCount: rows.length });
+  } catch (error) {
+    throw new PipelineStateError(
+      "GEMINI_INVALID_OUTPUT",
+      error instanceof Error
+        ? error.message
+        : "The project exceeds the chapter limit.",
+    );
+  }
+  if (rows.length === 0) {
+    throw new PipelineStateError(
+      "STEP_ORDER",
+      "Complete Chapters before generating illustrations.",
+    );
+  }
+
+  const selected = rows.filter(
+    (row) => row.illustration_status !== "COMPLETED",
+  );
+  if (selected.some((row) => row.illustration_status === "RUNNING")) {
+    throw new PipelineStateError(
+      "RUN_ALREADY_ACTIVE",
+      "This illustration is already running in another request.",
+    );
+  }
+  if (selected.length === 0) {
+    throw new PipelineStateError(
+      "STEP_ALREADY_COMPLETED",
+      "All chapter illustrations are already complete.",
+    );
+  }
+  return selected;
+}
+
 export function claimPipelineStep(
   database: Database.Database,
   input: {
@@ -193,7 +254,7 @@ export function claimPipelineStep(
     if (!isImplementedPipelineStep(input.step)) {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
-        "This pipeline step is not available in this milestone.",
+        "This pipeline step is not available.",
       );
     }
 
@@ -241,6 +302,10 @@ export function claimPipelineStep(
             input.projectId,
             input.portraitCharacterId,
           )
+        : [];
+    const illustrationItems =
+      input.step === "ILLUSTRATIONS"
+        ? selectIllustrationItems(database, input.projectId)
         : [];
 
     const now = new Date().toISOString();
@@ -292,6 +357,25 @@ export function claimPipelineStep(
         updatePortrait.run(runId, now, now, now, input.projectId, item.id);
       });
     }
+    if (input.step === "ILLUSTRATIONS") {
+      const updateIllustration = database.prepare(
+        `
+          UPDATE chapters
+          SET illustration_status = 'RUNNING',
+              illustration_active_run_id = ?,
+              illustration_attempt_count = illustration_attempt_count + 1,
+              illustration_claimed_at = ?,
+              illustration_heartbeat_at = ?,
+              illustration_error_code = NULL,
+              illustration_error_message = NULL,
+              updated_at = ?
+          WHERE project_id = ? AND id = ?
+        `,
+      );
+      illustrationItems.forEach((item) => {
+        updateIllustration.run(runId, now, now, now, input.projectId, item.id);
+      });
+    }
 
     return {
       attempt,
@@ -316,7 +400,7 @@ export function recoverStalePipelineStep(
     if (!isImplementedPipelineStep(input.step)) {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
-        "This pipeline step is not available in this milestone.",
+        "This pipeline step is not available.",
       );
     }
 
@@ -378,6 +462,21 @@ export function recoverStalePipelineStep(
         )
         .run(now, input.projectId, row.active_run_id);
     }
+    if (input.step === "ILLUSTRATIONS") {
+      database
+        .prepare(
+          `
+            UPDATE chapters
+            SET illustration_status = 'FAILED',
+                illustration_active_run_id = NULL,
+                illustration_error_code = 'STALE_RUN',
+                illustration_error_message = 'The previous run stopped responding. Retry this illustration.',
+                updated_at = ?
+            WHERE project_id = ? AND illustration_active_run_id = ?
+          `,
+        )
+        .run(now, input.projectId, row.active_run_id);
+    }
     database
       .prepare(
         `
@@ -416,6 +515,18 @@ function heartbeatPipelineRun(dataDir: string, claim: StepClaim): void {
             UPDATE characters
             SET portrait_heartbeat_at = ?, updated_at = ?
             WHERE project_id = ? AND portrait_active_run_id = ? AND portrait_status = 'RUNNING'
+          `,
+        )
+        .run(now, now, claim.projectId, claim.runId);
+    }
+    if (claim.step === "ILLUSTRATIONS") {
+      database
+        .prepare(
+          `
+            UPDATE chapters
+            SET illustration_heartbeat_at = ?, updated_at = ?
+            WHERE project_id = ? AND illustration_active_run_id = ?
+              AND illustration_status = 'RUNNING'
           `,
         )
         .run(now, now, claim.projectId, claim.runId);
@@ -629,6 +740,66 @@ function persistCharacterResult(
   });
 }
 
+function persistChapterResult(
+  dataDir: string,
+  claim: StepClaim,
+  input: {
+    chapters: Array<{ name: string; prompt: string }>;
+    interactionId: string;
+    modelId: string;
+    previousId: string;
+  },
+): void {
+  withDatabaseAt(dataDir, (database) => {
+    database.transaction(() => {
+      const active = database
+        .prepare(
+          "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+        )
+        .get(claim.projectId, claim.step, claim.runId);
+      if (!active) return;
+      const now = new Date().toISOString();
+      input.chapters.forEach((chapter, position) => {
+        database
+          .prepare(
+            `
+              INSERT INTO chapters
+                (id, project_id, position, name, prompt, created_at, updated_at)
+              VALUES (?, ?, ?, ?, ?, ?, ?)
+            `,
+          )
+          .run(
+            randomUUID(),
+            claim.projectId,
+            position,
+            chapter.name,
+            chapter.prompt,
+            now,
+            now,
+          );
+      });
+      database
+        .prepare(
+          `
+            INSERT INTO gemini_interactions
+              (id, project_id, step_key, interaction_id, model_id, previous_interaction_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          randomUUID(),
+          claim.projectId,
+          claim.step,
+          input.interactionId,
+          input.modelId,
+          input.previousId,
+          now,
+        );
+      completePipelineRun(database, claim, now);
+    })();
+  });
+}
+
 function persistPortraitSuccess(
   dataDir: string,
   claim: StepClaim,
@@ -741,6 +912,118 @@ function persistPortraitFailure(
   });
 }
 
+function persistIllustrationSuccess(
+  dataDir: string,
+  claim: StepClaim,
+  chapterId: string,
+  asset: StoredImageAsset,
+): boolean {
+  return withDatabaseAt(dataDir, (database) =>
+    database.transaction(() => {
+      const active = database
+        .prepare(
+          `
+            SELECT 1
+            FROM chapters ch
+            INNER JOIN project_steps ps ON ps.project_id = ch.project_id
+              AND ps.step_key = 'ILLUSTRATIONS'
+            WHERE ch.project_id = ?
+              AND ch.id = ?
+              AND ch.illustration_active_run_id = ?
+              AND ch.illustration_status = 'RUNNING'
+              AND ps.active_run_id = ?
+              AND ps.status = 'RUNNING'
+          `,
+        )
+        .get(claim.projectId, chapterId, claim.runId, claim.runId);
+      if (!active) return false;
+
+      const now = new Date().toISOString();
+      database
+        .prepare(
+          `
+            INSERT INTO assets
+              (id, project_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
+            VALUES (?, ?, 'ILLUSTRATION', ?, ?, ?, ?, ?, ?)
+          `,
+        )
+        .run(
+          asset.id,
+          claim.projectId,
+          asset.storageKey,
+          asset.mimeType,
+          asset.byteSize,
+          asset.checksum,
+          now,
+          now,
+        );
+      const result = database
+        .prepare(
+          `
+            UPDATE chapters
+            SET illustration_status = 'COMPLETED',
+                illustration_active_run_id = NULL,
+                illustration_heartbeat_at = ?,
+                illustration_error_code = NULL,
+                illustration_error_message = NULL,
+                illustration_asset_id = ?,
+                updated_at = ?
+            WHERE project_id = ? AND id = ? AND illustration_active_run_id = ?
+          `,
+        )
+        .run(now, asset.id, now, claim.projectId, chapterId, claim.runId);
+      if (result.changes !== 1) {
+        throw new PipelineStateError(
+          "STALE_RUN",
+          "This illustration run is no longer active.",
+        );
+      }
+      return true;
+    })(),
+  );
+}
+
+function persistIllustrationFailure(
+  dataDir: string,
+  claim: StepClaim,
+  chapterId: string,
+  error: unknown,
+): void {
+  const code =
+    error instanceof GeminiOutputError
+      ? error.code
+      : error && typeof error === "object" && "code" in error
+        ? String((error as { code: unknown }).code)
+        : "GEMINI_FAILED";
+  const message =
+    error instanceof Error ? error.message : "Illustration generation failed.";
+
+  withDatabaseAt(dataDir, (database) => {
+    database
+      .prepare(
+        `
+          UPDATE chapters
+          SET illustration_status = 'FAILED',
+              illustration_active_run_id = NULL,
+              illustration_heartbeat_at = ?,
+              illustration_error_code = ?,
+              illustration_error_message = ?,
+              updated_at = ?
+          WHERE project_id = ? AND id = ? AND illustration_active_run_id = ?
+        `,
+      )
+      .run(
+        new Date().toISOString(),
+        code,
+        message,
+        new Date().toISOString(),
+        claim.projectId,
+        chapterId,
+        claim.runId,
+      );
+  });
+}
+
 function getPortraitRunInput(
   dataDir: string,
   claim: StepClaim,
@@ -793,6 +1076,220 @@ function getPortraitRunInput(
       );
     }
     return { characters, style: project.style_text };
+  });
+}
+
+function getChapterRunInput(
+  dataDir: string,
+  claim: StepClaim,
+): {
+  portraitReferences: Array<{
+    assetId: string;
+    characterName: string;
+    characterPrompt: string;
+    mimeType: string;
+  }>;
+  style: string;
+} {
+  return withDatabaseAt(dataDir, (database) => {
+    const project = database
+      .prepare(
+        `
+          SELECT p.style_text
+          FROM projects p
+          INNER JOIN project_steps ps ON ps.project_id = p.id
+          WHERE p.id = ? AND ps.step_key = 'CHAPTERS'
+            AND ps.active_run_id = ? AND ps.status = 'RUNNING'
+        `,
+      )
+      .get(claim.projectId, claim.runId) as
+      { style_text: string | null } | undefined;
+    if (!project?.style_text) {
+      throw new PipelineStateError(
+        "STEP_ORDER",
+        "Complete Style before generating chapters.",
+      );
+    }
+
+    const references = database
+      .prepare(
+        `
+          SELECT c.name, c.prompt, c.portrait_asset_id, a.mime_type
+          FROM characters c
+          LEFT JOIN assets a ON a.id = c.portrait_asset_id
+          WHERE c.project_id = ?
+            AND c.portrait_status = 'COMPLETED'
+          ORDER BY c.position ASC
+        `,
+      )
+      .all(claim.projectId) as Array<{
+      name: string;
+      prompt: string;
+      portrait_asset_id: string | null;
+      mime_type: string | null;
+    }>;
+
+    try {
+      assertPipelineCaps({
+        adultCharacterCount: references.length,
+        chapterCount: 0,
+      });
+    } catch (error) {
+      throw new PipelineStateError(
+        "GEMINI_INVALID_OUTPUT",
+        error instanceof Error
+          ? error.message
+          : "The project exceeds the portrait character limit.",
+      );
+    }
+    if (
+      references.length === 0 ||
+      references.some(
+        (reference) => !reference.portrait_asset_id || !reference.mime_type,
+      )
+    ) {
+      throw new PipelineStateError(
+        "STEP_ORDER",
+        "Complete every portrait before generating chapters.",
+      );
+    }
+
+    return {
+      portraitReferences: references.map((reference) => ({
+        assetId: reference.portrait_asset_id as string,
+        characterName: reference.name,
+        characterPrompt: reference.prompt,
+        mimeType: reference.mime_type as string,
+      })),
+      style: project.style_text,
+    };
+  });
+}
+
+function buildChapterPrompt(input: {
+  portraitReferences: Array<{
+    assetId: string;
+    characterName: string;
+    characterPrompt: string;
+    mimeType: string;
+  }>;
+  style: string;
+}): string {
+  const references = input.portraitReferences
+    .map(
+      (reference) =>
+        `- ${reference.characterName} | portrait asset ${reference.assetId} | ${reference.mimeType}\n  Character prompt: ${reference.characterPrompt}`,
+    )
+    .join("\n");
+  return [
+    "Generate exactly one chapter illustration prompt from the book context.",
+    "Return only a JSON array with one object containing name and prompt.",
+    "The prompt must describe a single scene, name the adult characters who appear, and reuse their saved character descriptions.",
+    `Saved art style: ${input.style}`,
+    `Persisted portrait references:\n${references}`,
+  ].join("\n\n");
+}
+
+function getIllustrationRunInput(
+  dataDir: string,
+  claim: StepClaim,
+): {
+  chapter: { id: string; name: string; prompt: string };
+  portraitReferences: PortraitReference[];
+  style: string;
+} {
+  return withDatabaseAt(dataDir, (database) => {
+    const project = database
+      .prepare(
+        `
+          SELECT p.style_text
+          FROM projects p
+          INNER JOIN project_steps ps ON ps.project_id = p.id
+          WHERE p.id = ? AND ps.step_key = 'ILLUSTRATIONS'
+            AND ps.active_run_id = ? AND ps.status = 'RUNNING'
+        `,
+      )
+      .get(claim.projectId, claim.runId) as
+      { style_text: string | null } | undefined;
+    if (!project?.style_text) {
+      throw new PipelineStateError(
+        "STEP_ORDER",
+        "Complete Style before generating illustrations.",
+      );
+    }
+
+    const chapter = database
+      .prepare(
+        `
+          SELECT id, name, prompt
+          FROM chapters
+          WHERE project_id = ?
+            AND illustration_active_run_id = ?
+            AND illustration_status = 'RUNNING'
+          ORDER BY position ASC
+          LIMIT 1
+        `,
+      )
+      .get(claim.projectId, claim.runId) as
+      { id: string; name: string; prompt: string } | undefined;
+    if (!chapter) {
+      throw new PipelineStateError(
+        "STALE_RUN",
+        "No active chapter illustration remains for this run.",
+      );
+    }
+
+    const references = database
+      .prepare(
+        `
+          SELECT c.name, c.prompt, c.portrait_asset_id, a.mime_type
+          FROM characters c
+          LEFT JOIN assets a ON a.id = c.portrait_asset_id
+          WHERE c.project_id = ? AND c.portrait_status = 'COMPLETED'
+          ORDER BY c.position ASC
+        `,
+      )
+      .all(claim.projectId) as Array<{
+      name: string;
+      prompt: string;
+      portrait_asset_id: string | null;
+      mime_type: string | null;
+    }>;
+    if (
+      references.length === 0 ||
+      references.some(
+        (reference) => !reference.portrait_asset_id || !reference.mime_type,
+      )
+    ) {
+      throw new PipelineStateError(
+        "STEP_ORDER",
+        "Complete every portrait before generating illustrations.",
+      );
+    }
+
+    const portraitReferences = references.map((reference) => {
+      const assetId = reference.portrait_asset_id as string;
+      const asset = getProjectAssetFile(database, {
+        assetId,
+        dataDir,
+        projectId: claim.projectId,
+      });
+      if (!asset) {
+        throw new PipelineStateError(
+          "NOT_FOUND",
+          "A saved portrait asset could not be read.",
+        );
+      }
+      return {
+        assetId,
+        characterName: reference.name,
+        characterPrompt: reference.prompt,
+        bytes: fs.readFileSync(asset.filePath),
+        mimeType: reference.mime_type as string,
+      };
+    });
+
+    return { chapter, portraitReferences, style: project.style_text };
   });
 }
 
@@ -870,6 +1367,106 @@ async function executePortraits(
   });
 }
 
+async function executeChapters(
+  dataDir: string,
+  claim: StepClaim,
+  adapter: GeminiTextAdapter,
+): Promise<void> {
+  const input = getChapterRunInput(dataDir, claim);
+  const previousInteractionId = withDatabaseAt(
+    dataDir,
+    (database) =>
+      database
+        .prepare(
+          `
+          SELECT interaction_id
+          FROM gemini_interactions
+          WHERE project_id = ? AND step_key = 'CHARACTERS'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        )
+        .get(claim.projectId) as { interaction_id: string } | undefined,
+  )?.interaction_id;
+  if (!previousInteractionId) {
+    throw new PipelineStateError(
+      "STEP_ORDER",
+      "The Characters interaction is missing; run Characters again before Chapters.",
+    );
+  }
+
+  const interaction = await adapter.createTextInteraction({
+    previousInteractionId,
+    prompt: buildChapterPrompt(input),
+    responseFormat: CHAPTER_RESPONSE_FORMAT,
+  });
+  heartbeatPipelineRun(dataDir, claim);
+  const chapters = parseGeneratedChapters(interaction.outputText);
+  persistChapterResult(dataDir, claim, {
+    chapters,
+    interactionId: interaction.id,
+    modelId: adapter.modelId,
+    previousId: previousInteractionId,
+  });
+}
+
+async function executeIllustrations(
+  dataDir: string,
+  claim: StepClaim,
+  adapter: GeminiImageAdapter,
+): Promise<void> {
+  const input = getIllustrationRunInput(dataDir, claim);
+  let asset: StoredImageAsset | undefined;
+  try {
+    const generated = await adapter.generateIllustration({
+      chapterName: input.chapter.name,
+      chapterPrompt: input.chapter.prompt,
+      portraitReferences: input.portraitReferences,
+      style: input.style,
+    });
+    assertPipelineRunActive(dataDir, claim);
+    asset = writeImageAsset(dataDir, generated);
+    const persisted = persistIllustrationSuccess(
+      dataDir,
+      claim,
+      input.chapter.id,
+      asset,
+    );
+    if (!persisted) {
+      removeImageAsset(asset);
+      throw new PipelineStateError(
+        "STALE_RUN",
+        "This illustration run is no longer active.",
+      );
+    }
+    heartbeatPipelineRun(dataDir, claim);
+  } catch (error) {
+    if (asset) removeImageAsset(asset);
+    persistIllustrationFailure(dataDir, claim, input.chapter.id, error);
+    throw error;
+  }
+
+  withDatabaseAt(dataDir, (database) => {
+    const incomplete = database
+      .prepare(
+        "SELECT 1 FROM chapters WHERE project_id = ? AND illustration_status != 'COMPLETED' LIMIT 1",
+      )
+      .get(claim.projectId);
+    if (incomplete) {
+      failPipelineRun(
+        dataDir,
+        claim,
+        new PipelineStateError(
+          "GEMINI_FAILED",
+          "Some chapter illustrations still need attention.",
+        ),
+      );
+      return;
+    }
+    completePipelineRun(database, claim, new Date().toISOString());
+  });
+}
+
 function completePipelineRun(
   database: Database.Database,
   claim: StepClaim,
@@ -917,6 +1514,38 @@ function failPipelineRun(
   withDatabaseAt(dataDir, (database) => {
     database.transaction(() => {
       const now = new Date().toISOString();
+      if (claim.step === "PORTRAITS") {
+        database
+          .prepare(
+            `
+              UPDATE characters
+              SET portrait_status = 'FAILED',
+                  portrait_active_run_id = NULL,
+                  portrait_heartbeat_at = ?,
+                  portrait_error_code = ?,
+                  portrait_error_message = ?,
+                  updated_at = ?
+              WHERE project_id = ? AND portrait_active_run_id = ?
+            `,
+          )
+          .run(now, code, message, now, claim.projectId, claim.runId);
+      }
+      if (claim.step === "ILLUSTRATIONS") {
+        database
+          .prepare(
+            `
+              UPDATE chapters
+              SET illustration_status = 'FAILED',
+                  illustration_active_run_id = NULL,
+                  illustration_heartbeat_at = ?,
+                  illustration_error_code = ?,
+                  illustration_error_message = ?,
+                  updated_at = ?
+              WHERE project_id = ? AND illustration_active_run_id = ?
+            `,
+          )
+          .run(now, code, message, now, claim.projectId, claim.runId);
+      }
       const result = database
         .prepare(
           `
@@ -1129,10 +1758,30 @@ export async function executePipelineRun(input: {
         input.portraitCharacterId,
         adapter,
       );
+    } else if (input.claim.step === "CHAPTERS") {
+      const adapter =
+        input.adapter ??
+        createGeminiTextAdapter(
+          loadServerEnv({
+            requireGeminiKey: true,
+            requireTextModel: true,
+          }),
+        );
+      await executeChapters(input.dataDir, input.claim, adapter);
+    } else if (input.claim.step === "ILLUSTRATIONS") {
+      const adapter =
+        input.imageAdapter ??
+        createGeminiImageAdapter(
+          loadServerEnv({
+            requireGeminiKey: true,
+            requireImageModel: true,
+          }),
+        );
+      await executeIllustrations(input.dataDir, input.claim, adapter);
     } else {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
-        "This pipeline step is not available in this milestone.",
+        "Unknown pipeline step.",
       );
     }
   } catch (error) {

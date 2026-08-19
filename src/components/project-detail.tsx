@@ -10,6 +10,7 @@ import {
 } from "@/domain/pipeline";
 import type { ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
+import { ChapterList } from "@/components/chapter-list";
 import { CharacterGrid } from "@/components/character-grid";
 import { StepActionPanel } from "@/components/step-action-panel";
 import type { AuthenticatedUser } from "@/server/auth";
@@ -228,9 +229,7 @@ export function ProjectDetail({
                         ? "Running"
                         : step.status === "FAILED"
                           ? "Needs attention"
-                          : isImplementedPipelineStep(step.key)
-                            ? "Pending"
-                            : "Locked in this milestone"}
+                          : "Pending"}
                 </p>
               </li>
             ))}
@@ -259,6 +258,8 @@ export function ProjectDetail({
           }
           retryingCharacterId={retryingCharacterId}
         />
+
+        <ChapterList chapters={project.chapters} />
 
         <div className="mt-10 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
           <section

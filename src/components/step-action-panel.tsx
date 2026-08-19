@@ -5,8 +5,10 @@ const STEP_DESCRIPTIONS: Record<PipelineStep, string> = {
   STYLE: "Set a visual language for every illustration in this project.",
   CHARACTERS: "Find the main adult characters and prepare portrait prompts.",
   PORTRAITS: "Create one saved 3:4 portrait for each adult character.",
-  CHAPTERS: "Chapter prompts are planned for a later milestone.",
-  ILLUSTRATIONS: "Scene illustrations are planned for a later milestone.",
+  CHAPTERS:
+    "Write one chapter illustration prompt using the saved characters and portraits.",
+  ILLUSTRATIONS:
+    "Create one scene illustration using the saved chapter and portraits.",
 };
 
 const RUNNING_COPY: Record<PipelineStep, string> = {
@@ -38,7 +40,10 @@ export function StepActionPanel({
   implementedPipelineComplete?: boolean;
   textPipelineComplete?: boolean;
 }) {
-  const milestoneComplete = implementedPipelineComplete || textPipelineComplete;
+  // Kept in the public prop shape for the untracked workspace variant; M4 now
+  // treats all five steps as implemented, so the completion copy is uniform.
+  void implementedPipelineComplete;
+  void textPipelineComplete;
 
   if (!currentStep) {
     return (
@@ -47,14 +52,11 @@ export function StepActionPanel({
           <span className="flex size-8 items-center justify-center rounded-full bg-ink text-white">
             ✓
           </span>
-          {milestoneComplete
-            ? "Portraits milestone complete."
-            : "All pipeline steps are complete."}
+          All five pipeline steps are complete.
         </div>
         <p className="mt-4 text-sm leading-6 text-ink-body">
-          {milestoneComplete
-            ? "Style, Characters, and Portraits are saved. Chapters and Illustrations remain locked until a later milestone."
-            : "Nothing regenerates automatically. Your generated results remain saved when you return."}
+          Nothing regenerates automatically. Your generated results remain saved
+          when you return.
         </p>
       </section>
     );

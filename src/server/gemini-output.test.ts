@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  parseGeneratedChapters,
   parseGeneratedCharacters,
   parseGeneratedStyle,
 } from "@/server/gemini-output";
@@ -40,5 +41,23 @@ describe("Gemini structured output validation", () => {
   it("requires a non-empty style", () => {
     expect(parseGeneratedStyle("  ink and paper  ")).toBe("ink and paper");
     expect(() => parseGeneratedStyle(" ")).toThrow(/empty art style/);
+  });
+
+  it("accepts one chapter and rejects over-limit output", () => {
+    expect(
+      parseGeneratedChapters(
+        JSON.stringify([
+          { name: "The River", prompt: "A single river scene." },
+        ]),
+      ),
+    ).toEqual([{ name: "The River", prompt: "A single river scene." }]);
+    expect(() =>
+      parseGeneratedChapters(
+        JSON.stringify([
+          { name: "One", prompt: "A scene." },
+          { name: "Two", prompt: "Another scene." },
+        ]),
+      ),
+    ).toThrow(/more than 1 chapter/);
   });
 });

@@ -18,11 +18,13 @@ describe("pipeline contract", () => {
     ]);
   });
 
-  it("keeps the implementation boundary at Portraits", () => {
+  it("keeps the implementation boundary at Illustrations", () => {
     expect(IMPLEMENTED_PIPELINE_STEPS).toEqual([
       "STYLE",
       "CHARACTERS",
       "PORTRAITS",
+      "CHAPTERS",
+      "ILLUSTRATIONS",
     ]);
   });
 

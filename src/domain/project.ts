@@ -18,6 +18,16 @@ export const PORTRAIT_ITEM_STATUSES = [
 
 export type PortraitItemStatus = (typeof PORTRAIT_ITEM_STATUSES)[number];
 
+export const ILLUSTRATION_ITEM_STATUSES = [
+  "PENDING",
+  "RUNNING",
+  "FAILED",
+  "COMPLETED",
+] as const;
+
+export type IllustrationItemStatus =
+  (typeof ILLUSTRATION_ITEM_STATUSES)[number];
+
 export type ProjectStatus = "DRAFT" | "IN_PROGRESS" | "DONE";
 
 export type ProjectStepView = {
@@ -56,6 +66,26 @@ export type PortraitItemView = {
   status: PortraitItemStatus;
 };
 
+export type IllustrationItemView = {
+  attempt: number;
+  assetId: string | null;
+  assetUrl: string | null;
+  claimedAt: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  heartbeatAt: string | null;
+  isStale: boolean;
+  status: IllustrationItemStatus;
+};
+
+export type ChapterView = {
+  id: string;
+  name: string;
+  position: number;
+  prompt: string;
+  illustration: IllustrationItemView;
+};
+
 export type ProjectSummary = {
   id: string;
   title: string;
@@ -68,6 +98,7 @@ export type ProjectSummary = {
 export type ProjectDetailView = ProjectSummary & {
   bookText: string;
   characters: CharacterView[];
+  chapters: ChapterView[];
   style: string | null;
   steps: ProjectStepView[];
 };

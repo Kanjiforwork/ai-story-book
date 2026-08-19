@@ -16,6 +16,8 @@ export const IMPLEMENTED_PIPELINE_STEPS = [
   "STYLE",
   "CHARACTERS",
   "PORTRAITS",
+  "CHAPTERS",
+  "ILLUSTRATIONS",
 ] as const;
 
 export type ImplementedPipelineStep =

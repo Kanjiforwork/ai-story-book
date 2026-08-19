@@ -177,3 +177,40 @@ export function getOwnedAssetFile(
     mimeType: row.mime_type,
   };
 }
+
+export function getProjectAssetFile(
+  database: Database.Database,
+  input: { assetId: string; dataDir: string; projectId: string },
+): OwnedAssetFile | null {
+  if (!isSafeAssetId(input.assetId)) return null;
+
+  const row = database
+    .prepare(
+      `
+        SELECT a.id, a.storage_key, a.mime_type, a.byte_size
+        FROM assets a
+        WHERE a.id = ? AND a.project_id = ?
+      `,
+    )
+    .get(input.assetId, input.projectId) as AssetRow | undefined;
+  if (!row) return null;
+
+  let filePath: string;
+  try {
+    filePath = resolveStoredAssetPath(input.dataDir, row.storage_key);
+    const stats = fs.lstatSync(filePath);
+    if (!stats.isFile()) return null;
+    const realPath = fs.realpathSync(filePath);
+    const root = fs.realpathSync(resolveDataRoot(input.dataDir));
+    if (!realPath.startsWith(`${root}${path.sep}`)) return null;
+  } catch {
+    return null;
+  }
+
+  return {
+    byteSize: row.byte_size,
+    filePath,
+    id: row.id,
+    mimeType: row.mime_type,
+  };
+}

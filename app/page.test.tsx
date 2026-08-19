@@ -29,6 +29,7 @@ function projectFixture(): ProjectDetailView {
   return {
     bookText: "A river ran beside the burrow.",
     characters: [],
+    chapters: [],
     completedSteps: 0,
     createdAt: "2026-01-01T00:00:00.000Z",
     id: "project-1",
@@ -158,9 +159,7 @@ describe("foundation app shell", () => {
       screen.getByRole("button", { name: /generate portraits/i }),
     ).toBeInTheDocument();
     expect(screen.getAllByText("Chapters").length).toBeGreaterThan(0);
-    expect(
-      screen.getAllByText("Locked in this milestone").length,
-    ).toBeGreaterThan(0);
+    expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
   });
 
   it("renders a saved portrait beside a retryable partial failure", () => {

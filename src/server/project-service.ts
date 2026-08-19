@@ -5,6 +5,8 @@ import type Database from "better-sqlite3";
 import { PIPELINE_STEP_LABELS, PIPELINE_STEPS } from "@/domain/pipeline";
 import type {
   CharacterView,
+  ChapterView,
+  IllustrationItemStatus,
   PortraitItemStatus,
   ProjectDetailView,
   ProjectStatus,
@@ -55,6 +57,21 @@ type CharacterRow = {
   portrait_error_message: string | null;
   portrait_heartbeat_at: string | null;
   portrait_status: PortraitItemStatus;
+};
+
+type ChapterRow = {
+  id: string;
+  name: string;
+  position: number;
+  prompt: string;
+  illustration_active_run_id: string | null;
+  illustration_asset_id: string | null;
+  illustration_attempt_count: number;
+  illustration_claimed_at: string | null;
+  illustration_error_code: string | null;
+  illustration_error_message: string | null;
+  illustration_heartbeat_at: string | null;
+  illustration_status: IllustrationItemStatus;
 };
 
 export const DEFAULT_STALE_RUN_MS = 120_000;
@@ -133,6 +150,34 @@ function toPortraitView(
     heartbeatAt: row.portrait_heartbeat_at,
     isStale,
     status: row.portrait_status,
+  };
+}
+
+function toIllustrationView(
+  row: ChapterRow,
+  staleRunMs: number,
+  now: number,
+): ChapterView["illustration"] {
+  const heartbeatTime = row.illustration_heartbeat_at
+    ? Date.parse(row.illustration_heartbeat_at)
+    : Number.NaN;
+  const isStale =
+    row.illustration_status === "RUNNING" &&
+    Number.isFinite(heartbeatTime) &&
+    now - heartbeatTime > staleRunMs;
+
+  return {
+    attempt: row.illustration_attempt_count,
+    assetId: row.illustration_asset_id,
+    assetUrl: row.illustration_asset_id
+      ? `/api/assets/${row.illustration_asset_id}`
+      : null,
+    claimedAt: row.illustration_claimed_at,
+    errorCode: row.illustration_error_code,
+    errorMessage: row.illustration_error_message,
+    heartbeatAt: row.illustration_heartbeat_at,
+    isStale,
+    status: row.illustration_status,
   };
 }
 
@@ -300,6 +345,28 @@ export function getProjectDetail(
       `,
     )
     .all(projectId) as CharacterRow[];
+  const chapterRows = database
+    .prepare(
+      `
+        SELECT
+          ch.id,
+          ch.name,
+          ch.position,
+          ch.prompt,
+          ch.illustration_active_run_id,
+          ch.illustration_asset_id,
+          ch.illustration_attempt_count,
+          ch.illustration_claimed_at,
+          ch.illustration_error_code,
+          ch.illustration_error_message,
+          ch.illustration_heartbeat_at,
+          ch.illustration_status
+        FROM chapters AS ch
+        WHERE ch.project_id = ?
+        ORDER BY ch.position ASC
+      `,
+    )
+    .all(projectId) as ChapterRow[];
   const now = Date.now();
   const characters: CharacterView[] = characterRows.map((character) => ({
     id: character.id,
@@ -309,11 +376,19 @@ export function getProjectDetail(
     portrait: toPortraitView(character, staleRunMs, now),
   }));
   const summary = toSummary(row);
+  const chapters: ChapterView[] = chapterRows.map((chapter) => ({
+    id: chapter.id,
+    name: chapter.name,
+    position: chapter.position,
+    prompt: chapter.prompt,
+    illustration: toIllustrationView(chapter, staleRunMs, now),
+  }));
 
   return {
     ...summary,
     bookText: readBookText(dataDir, row.book_text_key),
     characters,
+    chapters,
     style: row.style_text,
     steps: toStepViews(stepRows, staleRunMs),
   };

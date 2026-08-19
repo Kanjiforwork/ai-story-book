@@ -27,13 +27,20 @@ describe("local SQLite bootstrap", () => {
       .prepare("SELECT value FROM schema_meta WHERE key = ?")
       .get("schema_version") as { value: string } | undefined;
 
-    expect(row?.value).toBe("4");
+    expect(row?.value).toBe("5");
     expect(
       database
         .prepare(
           "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
         )
         .get("project_steps"),
+    ).toBeTruthy();
+    expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .get("chapters"),
     ).toBeTruthy();
     expect(
       database
@@ -66,7 +73,7 @@ describe("local SQLite bootstrap", () => {
     database.close();
   });
 
-  it("upgrades a version three database with portrait metadata", () => {
+  it("upgrades a version three database with portrait and chapter metadata", () => {
     const directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "gradion-book-studio-migration-"),
     );
@@ -106,7 +113,7 @@ describe("local SQLite bootstrap", () => {
       database
         .prepare("SELECT value FROM schema_meta WHERE key = ?")
         .get("schema_version"),
-    ).toEqual({ value: "4" });
+    ).toEqual({ value: "5" });
     expect(
       database
         .prepare(
@@ -115,12 +122,51 @@ describe("local SQLite bootstrap", () => {
         .get("assets"),
     ).toBeTruthy();
     expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .get("chapters"),
+    ).toBeTruthy();
+    expect(
       (
         database.prepare("PRAGMA table_info(characters)").all() as Array<{
           name: string;
         }>
       ).map((column) => column.name),
     ).toEqual(expect.arrayContaining(["portrait_status", "portrait_asset_id"]));
+    database.close();
+  });
+
+  it("upgrades the M3 schema version with the M4 chapters table", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "gradion-book-studio-m4-migration-"),
+    );
+    temporaryDirectories.push(directory);
+    const dataDir = path.join(directory, "data");
+    fs.mkdirSync(dataDir, { recursive: true });
+
+    const legacyDatabase = new Database(path.join(dataDir, "gradion.sqlite"));
+    legacyDatabase.exec(`
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO schema_meta (key, value) VALUES ('schema_version', '4');
+      CREATE TABLE assets (id TEXT PRIMARY KEY);
+    `);
+    legacyDatabase.close();
+
+    const database = openDatabase(dataDir);
+    expect(
+      database
+        .prepare("SELECT value FROM schema_meta WHERE key = ?")
+        .get("schema_version"),
+    ).toEqual({ value: "5" });
+    expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .get("chapters"),
+    ).toBeTruthy();
     database.close();
   });
 });

@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { loadServerEnv } from "@/server/env";
 
 const DATABASE_FILENAME = "gradion.sqlite";
-const CURRENT_SCHEMA_VERSION = 4;
+const CURRENT_SCHEMA_VERSION = 5;
 
 export function ensureDataDirectory(dataDir?: string): string {
   const resolved = path.resolve(
@@ -215,6 +215,44 @@ export function openDatabase(dataDir?: string): Database.Database {
     });
 
     migrateToVersionFour();
+  }
+
+  if (currentVersion < 5) {
+    const migrateToVersionFive = database.transaction(() => {
+      database.exec(`
+        CREATE TABLE IF NOT EXISTS chapters (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          illustration_status TEXT NOT NULL DEFAULT 'PENDING'
+            CHECK (illustration_status IN ('PENDING', 'RUNNING', 'FAILED', 'COMPLETED')),
+          illustration_active_run_id TEXT,
+          illustration_attempt_count INTEGER NOT NULL DEFAULT 0,
+          illustration_claimed_at TEXT,
+          illustration_heartbeat_at TEXT,
+          illustration_error_code TEXT,
+          illustration_error_message TEXT,
+          illustration_asset_id TEXT REFERENCES assets(id) ON DELETE SET NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (project_id, position)
+        );
+
+        CREATE INDEX IF NOT EXISTS chapters_project_position_idx
+          ON chapters(project_id, position);
+
+        CREATE INDEX IF NOT EXISTS chapters_illustration_status_idx
+          ON chapters(project_id, illustration_status);
+      `);
+
+      database
+        .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
+        .run(String(CURRENT_SCHEMA_VERSION), "schema_version");
+    });
+
+    migrateToVersionFive();
   }
 
   return database;
