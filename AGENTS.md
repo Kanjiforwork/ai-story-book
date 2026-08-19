@@ -86,6 +86,15 @@ Prepare commits continuously at meaningful boundaries—not after every line and
 - Do not squash meaningful progress into one final commit.
 - If AI authored most of a commit, say so honestly in the commit body and include what was human-reviewed and verified.
 
+### Commit message quality
+
+- Keep the subject imperative, specific, and concise: `<type>: <what changed>`.
+- Use a short body only when it adds context about what changed or why; do not write a worklog.
+- If AI authored most of the commit, add one honest `AI-assisted:` line in the body. Do not claim human review or verification that did not happen.
+- Use real paragraph breaks in commit bodies; never leave escaped `\\n` text in the message.
+- Add a `Human review:` or `Verification:` line only when the statement is factual and useful.
+- Do not rewrite existing commit history unless Bao explicitly approves the exact commit range. Rewriting commits already present in `origin/main` requires explicit approval before any force-push.
+
 Suggested commit body:
 
 ```text
