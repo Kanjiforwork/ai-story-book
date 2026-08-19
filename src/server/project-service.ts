@@ -4,8 +4,10 @@ import type Database from "better-sqlite3";
 
 import { PIPELINE_STEP_LABELS, PIPELINE_STEPS } from "@/domain/pipeline";
 import type {
+  CharacterView,
   ProjectDetailView,
   ProjectStatus,
+  ProjectStepRunView,
   ProjectStepStatus,
   ProjectStepView,
   ProjectSummary,
@@ -23,14 +25,23 @@ type ProjectRow = {
   title: string;
   book_text_key: string;
   created_at: string;
+  style_text: string | null;
   step_statuses: string;
 };
 
 type StepRow = {
+  active_run_id: string | null;
+  attempt_count: number;
+  claimed_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
+  heartbeat_at: string | null;
   step_key: (typeof PIPELINE_STEPS)[number];
   position: number;
   status: ProjectStepStatus;
 };
+
+export const DEFAULT_STALE_RUN_MS = 120_000;
 
 function deriveProjectStatus(
   statuses: readonly ProjectStepStatus[],
@@ -45,12 +56,40 @@ function deriveProjectStatus(
   return "DRAFT";
 }
 
-function toStepViews(rows: readonly StepRow[]): ProjectStepView[] {
+function toStepViews(
+  rows: readonly StepRow[],
+  staleRunMs: number,
+  now = Date.now(),
+): ProjectStepView[] {
   return rows.map((row) => ({
     key: row.step_key,
     position: row.position,
     status: row.status,
+    run: toStepRunView(row, staleRunMs, now),
   }));
+}
+
+function toStepRunView(
+  row: StepRow,
+  staleRunMs: number,
+  now: number,
+): ProjectStepRunView {
+  const heartbeatTime = row.heartbeat_at
+    ? Date.parse(row.heartbeat_at)
+    : Number.NaN;
+  const isStale =
+    row.status === "RUNNING" &&
+    Number.isFinite(heartbeatTime) &&
+    now - heartbeatTime > staleRunMs;
+
+  return {
+    attempt: row.attempt_count,
+    claimedAt: row.claimed_at,
+    heartbeatAt: row.heartbeat_at,
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    isStale,
+  };
 }
 
 function toSummary(row: ProjectRow): ProjectSummary {
@@ -79,6 +118,7 @@ function selectProjectRows(
           p.title,
           p.book_text_key,
           p.created_at,
+          p.style_text,
           (
             SELECT GROUP_CONCAT(ordered_steps.status, ',')
             FROM (
@@ -170,6 +210,7 @@ export function getProjectDetail(
   userId: string,
   projectId: string,
   dataDir: string,
+  staleRunMs = DEFAULT_STALE_RUN_MS,
 ): ProjectDetailView | null {
   const row = selectProjectRows(database, userId, projectId)[0];
   if (!row) return null;
@@ -177,19 +218,40 @@ export function getProjectDetail(
   const stepRows = database
     .prepare(
       `
-        SELECT step_key, position, status
+        SELECT
+          step_key,
+          position,
+          status,
+          active_run_id,
+          attempt_count,
+          claimed_at,
+          heartbeat_at,
+          error_code,
+          error_message
         FROM project_steps
         WHERE project_id = ?
         ORDER BY position ASC
       `,
     )
     .all(projectId) as StepRow[];
+  const characters = database
+    .prepare(
+      `
+        SELECT id, name, position, prompt
+        FROM characters
+        WHERE project_id = ?
+        ORDER BY position ASC
+      `,
+    )
+    .all(projectId) as CharacterView[];
   const summary = toSummary(row);
 
   return {
     ...summary,
     bookText: readBookText(dataDir, row.book_text_key),
-    steps: toStepViews(stepRows),
+    characters,
+    style: row.style_text,
+    steps: toStepViews(stepRows, staleRunMs),
   };
 }
 

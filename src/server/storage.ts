@@ -6,7 +6,7 @@ import Database from "better-sqlite3";
 import { loadServerEnv } from "@/server/env";
 
 const DATABASE_FILENAME = "gradion.sqlite";
-const CURRENT_SCHEMA_VERSION = 2;
+const CURRENT_SCHEMA_VERSION = 3;
 
 export function ensureDataDirectory(dataDir?: string): string {
   const resolved = path.resolve(
@@ -107,6 +107,73 @@ export function openDatabase(dataDir?: string): Database.Database {
     });
 
     migrateToVersionTwo();
+  }
+
+  if (currentVersion < 3) {
+    const migrateToVersionThree = database.transaction(() => {
+      database.exec(`
+        ALTER TABLE projects ADD COLUMN gemini_file_name TEXT;
+        ALTER TABLE projects ADD COLUMN gemini_file_uri TEXT;
+        ALTER TABLE projects ADD COLUMN gemini_context_interaction_id TEXT;
+        ALTER TABLE projects ADD COLUMN style_text TEXT;
+
+        ALTER TABLE project_steps ADD COLUMN active_run_id TEXT;
+        ALTER TABLE project_steps ADD COLUMN attempt_count INTEGER NOT NULL DEFAULT 0;
+        ALTER TABLE project_steps ADD COLUMN claimed_at TEXT;
+        ALTER TABLE project_steps ADD COLUMN heartbeat_at TEXT;
+
+        CREATE TABLE IF NOT EXISTS pipeline_runs (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          step_key TEXT NOT NULL,
+          attempt INTEGER NOT NULL,
+          status TEXT NOT NULL CHECK (status IN ('RUNNING', 'FAILED', 'COMPLETED')),
+          claimed_at TEXT NOT NULL,
+          heartbeat_at TEXT NOT NULL,
+          finished_at TEXT,
+          error_code TEXT,
+          error_message TEXT,
+          UNIQUE (project_id, step_key, attempt)
+        );
+
+        CREATE INDEX IF NOT EXISTS pipeline_runs_project_step_idx
+          ON pipeline_runs(project_id, step_key, claimed_at DESC);
+
+        CREATE TABLE IF NOT EXISTS gemini_interactions (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          step_key TEXT NOT NULL,
+          interaction_id TEXT NOT NULL,
+          model_id TEXT NOT NULL,
+          previous_interaction_id TEXT,
+          created_at TEXT NOT NULL,
+          UNIQUE (project_id, step_key, interaction_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS gemini_interactions_project_step_idx
+          ON gemini_interactions(project_id, step_key, created_at ASC);
+
+        CREATE TABLE IF NOT EXISTS characters (
+          id TEXT PRIMARY KEY,
+          project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+          position INTEGER NOT NULL,
+          name TEXT NOT NULL,
+          prompt TEXT NOT NULL,
+          created_at TEXT NOT NULL,
+          updated_at TEXT NOT NULL,
+          UNIQUE (project_id, position)
+        );
+
+        CREATE INDEX IF NOT EXISTS characters_project_position_idx
+          ON characters(project_id, position);
+      `);
+
+      database
+        .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
+        .run(String(CURRENT_SCHEMA_VERSION), "schema_version");
+    });
+
+    migrateToVersionThree();
   }
 
   return database;

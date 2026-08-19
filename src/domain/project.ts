@@ -15,6 +15,23 @@ export type ProjectStepView = {
   key: PipelineStep;
   position: number;
   status: ProjectStepStatus;
+  run: ProjectStepRunView;
+};
+
+export type ProjectStepRunView = {
+  attempt: number;
+  claimedAt: string | null;
+  heartbeatAt: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  isStale: boolean;
+};
+
+export type CharacterView = {
+  id: string;
+  name: string;
+  position: number;
+  prompt: string;
 };
 
 export type ProjectSummary = {
@@ -28,5 +45,7 @@ export type ProjectSummary = {
 
 export type ProjectDetailView = ProjectSummary & {
   bookText: string;
+  characters: CharacterView[];
+  style: string | null;
   steps: ProjectStepView[];
 };

@@ -34,6 +34,12 @@ Use `app-demo.html` to define the minimum visual scope, screens, interaction cov
 
 When the implementation agent proposes its first component structure or attempts to reuse demo behavior, update this entry with the actual proposal and the correction made.
 
+## Decision: server-side Gemini adapter with text-only M2 verification
+
+**Status:** Implemented for M2.
+
+The AI proposed following the notebook's Gemini flow—upload the book once, chain Style and Characters through the Interactions API, and validate structured output—but kept the model configurable behind a server-only adapter. Bao chose `gemini-3.6-flash` for text and explicitly pushed back on live image generation during testing because it incurs cost. We landed on the official `@google/genai` SDK, with the source file URI and interaction IDs persisted so refreshes and retries do not restart the context. The accepted cost is that M2 verifies the text pipeline with mocks and a local UI smoke test; real Gemini text and image calls remain deliberate UAT/M3 work.
+
 ## Working decision: main-only workflow for the local take-home
 
 **Status:** Direction agreed during planning.
@@ -42,7 +48,7 @@ The AI initially required a short-lived `codex/<topic>` branch for implementatio
 
 ## Decisions still to settle during planning
 
-- Gemini notebook mechanics: file/document input, context chaining, structured output, current model IDs, and image limits.
+- Gemini image mechanics and cost boundary for M3.
 - Polling versus SSE/WebSockets: likely polling for the local time-boxed scope unless evidence shows otherwise.
 - Lightweight server-owned session representation and its cookie/security trade-off.
 - Asset API shape and path-traversal protection.

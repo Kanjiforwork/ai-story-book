@@ -1,8 +1,13 @@
+"use client";
+
 import Link from "next/link";
+import { useEffect, useState } from "react";
 
 import { PIPELINE_STEP_LABELS } from "@/domain/pipeline";
 import type { ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
+import { CharacterGrid } from "@/components/character-grid";
+import { StepActionPanel } from "@/components/step-action-panel";
 import type { AuthenticatedUser } from "@/server/auth";
 
 function formatDate(value: string): string {
@@ -14,12 +19,101 @@ function formatDate(value: string): string {
 }
 
 export function ProjectDetail({
-  project,
+  project: initialProject,
   user,
 }: {
   project: ProjectDetailView;
   user: AuthenticatedUser;
 }) {
+  const [project, setProject] = useState(initialProject);
+  const [styleDraft, setStyleDraft] = useState("");
+  const [pendingAction, setPendingAction] = useState<"run" | "recover" | null>(
+    null,
+  );
+  const [actionError, setActionError] = useState<string | null>(null);
+  const currentStep =
+    project.steps.find((step) => step.status !== "COMPLETED") ?? null;
+  const shouldPoll = project.steps.some(
+    (step) => step.status === "RUNNING" && !step.run.isStale,
+  );
+
+  async function refreshProject() {
+    try {
+      const response = await fetch(`/api/projects/${project.id}`, {
+        cache: "no-store",
+      });
+      const payload = (await response.json()) as {
+        message?: string;
+        project?: ProjectDetailView;
+      };
+      if (!response.ok || !payload.project) {
+        setActionError(payload.message ?? "We could not refresh this project.");
+        return;
+      }
+      setProject(payload.project);
+    } catch {
+      setActionError("The server could not be reached. Try again.");
+    }
+  }
+
+  useEffect(() => {
+    if (!shouldPoll) return;
+    const interval = window.setInterval(() => void refreshProject(), 2_500);
+    return () => window.clearInterval(interval);
+    // The server view controls whether polling continues.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project.id, shouldPoll]);
+
+  async function runCurrentStep() {
+    if (!currentStep) return;
+    setPendingAction("run");
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${project.id}/steps/${currentStep.key}/run`,
+        {
+          body: JSON.stringify(
+            currentStep.key === "STYLE" ? { style: styleDraft } : {},
+          ),
+          headers: { "content-type": "application/json" },
+          method: "POST",
+        },
+      );
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        setActionError(payload.message ?? "This step could not start.");
+        return;
+      }
+      await refreshProject();
+    } catch {
+      setActionError("The server could not be reached. Try again.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
+  async function recoverCurrentStep() {
+    if (!currentStep) return;
+    setPendingAction("recover");
+    setActionError(null);
+    try {
+      const response = await fetch(
+        `/api/projects/${project.id}/steps/${currentStep.key}/recover`,
+        { method: "POST" },
+      );
+      const payload = (await response.json()) as { message?: string };
+      if (!response.ok) {
+        setActionError(payload.message ?? "This step could not be recovered.");
+        return;
+      }
+      await refreshProject();
+    } catch {
+      setActionError("The server could not be reached. Try again.");
+    } finally {
+      setPendingAction(null);
+    }
+  }
+
   return (
     <AppShell user={user}>
       <main className="mx-auto max-w-5xl px-5 py-10 sm:px-8 sm:py-14">
@@ -59,7 +153,10 @@ export function ProjectDetail({
           <ol className="grid gap-3 sm:grid-cols-5">
             {project.steps.map((step) => (
               <li
-                className="rounded-2xl border border-line/60 bg-surface p-4"
+                aria-current={
+                  currentStep?.key === step.key ? "step" : undefined
+                }
+                className={`rounded-2xl border p-4 ${currentStep?.key === step.key ? "border-orange/50 bg-orange/5" : "border-line/60 bg-surface"}`}
                 key={step.key}
               >
                 <div className="flex items-center gap-3">
@@ -69,7 +166,9 @@ export function ProjectDetail({
                         ? "bg-ink text-white"
                         : step.status === "RUNNING"
                           ? "bg-orange text-white"
-                          : "bg-line/50 text-ink-body"
+                          : step.status === "FAILED"
+                            ? "bg-orange-deep text-white"
+                            : "bg-line/50 text-ink-body"
                     }`}
                   >
                     {step.status === "COMPLETED" ? "✓" : step.position + 1}
@@ -81,16 +180,32 @@ export function ProjectDetail({
                 <p className="mt-3 text-xs text-ink-muted">
                   {step.status === "COMPLETED"
                     ? "Complete"
-                    : step.status === "RUNNING"
-                      ? "Running"
-                      : step.status === "FAILED"
-                        ? "Needs attention"
-                        : "Pending"}
+                    : step.status === "RUNNING" && step.run.isStale
+                      ? "Interrupted"
+                      : step.status === "RUNNING"
+                        ? "Running"
+                        : step.status === "FAILED"
+                          ? "Needs attention"
+                          : "Pending"}
                 </p>
               </li>
             ))}
           </ol>
         </section>
+
+        <div className="mt-8">
+          <StepActionPanel
+            actionError={actionError}
+            currentStep={currentStep}
+            onRecover={recoverCurrentStep}
+            onRun={runCurrentStep}
+            onStyleDraftChange={setStyleDraft}
+            pending={pendingAction !== null}
+            styleDraft={styleDraft}
+          />
+        </div>
+
+        <CharacterGrid characters={project.characters} />
 
         <div className="mt-10 grid gap-6 lg:grid-cols-[1.3fr_0.7fr]">
           <section
@@ -120,12 +235,14 @@ export function ProjectDetail({
 
           <aside className="rounded-3xl bg-paper p-6 sm:p-8">
             <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-              Next step
+              Art style
             </p>
-            <h2 className="mt-2 text-2xl font-semibold">Project saved</h2>
+            <h2 className="mt-2 text-2xl font-semibold">
+              {project.style ? "Saved style" : "Style not generated"}
+            </h2>
             <p className="mt-4 text-sm leading-6 text-ink-body">
-              Your source text and progress are stored on the server. Generation
-              actions will be added in the next milestone.
+              {project.style ??
+                "Generate Style first. Characters will use the saved style as context."}
             </p>
           </aside>
         </div>

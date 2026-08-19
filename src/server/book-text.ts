@@ -51,7 +51,7 @@ export async function decodeTextUpload(file: File): Promise<string> {
   }
 }
 
-function resolveBookPath(dataDir: string, key: string): string {
+export function resolveBookPath(dataDir: string, key: string): string {
   if (!BOOK_KEY_PATTERN.test(key)) {
     throw new Error("Invalid book text asset key.");
   }

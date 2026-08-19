@@ -48,3 +48,20 @@ export function normalizeProjectTitle(value: unknown): string {
   }
   return title;
 }
+
+export const MAX_STYLE_CHARACTERS = 500;
+
+export function normalizeOptionalStyle(value: unknown): string {
+  if (value === undefined || value === null) return "";
+  if (typeof value !== "string") {
+    throw new ValidationError("Art style must be text.");
+  }
+
+  const style = value.trim();
+  if (style.length > MAX_STYLE_CHARACTERS) {
+    throw new ValidationError(
+      `Art style must be ${MAX_STYLE_CHARACTERS} characters or fewer.`,
+    );
+  }
+  return style;
+}

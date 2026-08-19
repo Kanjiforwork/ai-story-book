@@ -8,6 +8,14 @@ export const PIPELINE_STEPS = [
 
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
 
+export type PipelineErrorCode =
+  | "STEP_ORDER"
+  | "STEP_ALREADY_COMPLETED"
+  | "RUN_ALREADY_ACTIVE"
+  | "STALE_RUN"
+  | "GEMINI_FAILED"
+  | "GEMINI_INVALID_OUTPUT";
+
 export const PIPELINE_STEP_LABELS: Record<PipelineStep, string> = {
   STYLE: "Style",
   CHARACTERS: "Characters",
@@ -23,6 +31,13 @@ export const PIPELINE_LIMITS = {
 
 export function isPipelineStep(value: string): value is PipelineStep {
   return (PIPELINE_STEPS as readonly string[]).includes(value);
+}
+
+export function previousPipelineStep(
+  step: PipelineStep,
+): PipelineStep | undefined {
+  const position = PIPELINE_STEPS.indexOf(step);
+  return position > 0 ? PIPELINE_STEPS[position - 1] : undefined;
 }
 
 export function assertPipelineCaps(input: {

@@ -23,6 +23,7 @@ export async function GET(
         user.id,
         projectId,
         env.dataDir,
+        env.staleRunMs,
       );
       if (!project) return { kind: "not_found" as const };
       return { kind: "ok" as const, project };

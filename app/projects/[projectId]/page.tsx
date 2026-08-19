@@ -17,8 +17,9 @@ export default async function ProjectDetailPage({
   if (!user) redirect("/");
   const { projectId } = await params;
 
+  const env = loadServerEnv();
   const project = withDatabase((database) =>
-    getProjectDetail(database, user.id, projectId, loadServerEnv().dataDir),
+    getProjectDetail(database, user.id, projectId, env.dataDir, env.staleRunMs),
   );
   if (!project) notFound();
 
