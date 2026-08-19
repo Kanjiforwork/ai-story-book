@@ -34,6 +34,12 @@ Use `app-demo.html` to define the minimum visual scope, screens, interaction cov
 
 When the implementation agent proposes its first component structure or attempts to reuse demo behavior, update this entry with the actual proposal and the correction made.
 
+## Working decision: main-only workflow for the local take-home
+
+**Status:** Direction agreed during planning.
+
+The AI initially required a short-lived `codex/<topic>` branch for implementation. Bao pushed back because this is a small, single-developer, local take-home with no production release, parallel feature work, or pull-request review. We landed on working directly on `main` and using small, meaningful commits as the primary safety and review mechanism. A short-lived branch remains available for parallel work, PR/review, or a risky experiment that needs isolation. The accepted cost is less branch-level isolation during normal work; the benefit is less workflow overhead and a clearer linear Git history for the assessment. This is a scope-specific choice, not a general production branching policy.
+
 ## Decisions still to settle during planning
 
 - Gemini notebook mechanics: file/document input, context chaining, structured output, current model IDs, and image limits.

@@ -22,7 +22,7 @@ If sources conflict, call out the conflict and follow the higher-priority source
 
 ## Repository workflow
 
-- Use a short-lived `codex/<topic>` branch for product implementation when branch setup begins. Keep the initial repository-foundation commit separate from feature work.
+- Work directly on `main` by default for this single-developer, local take-home. Create a short-lived `codex/<topic>` branch only when parallel work, PR/review, or a risky experiment needs isolation. Keep meaningful milestones in separate commits either way.
 - Do not push, publish, deploy, or open a pull request unless Bao explicitly requests that exact action.
 - Stage specific files only. Do not use `git add .` or `git add -A` because ignored/private assessment files and unrelated user changes must remain out of commits.
 - Before changing a shared or unfamiliar area, inspect its nearby tests, docs, and current diff. Do not assume a clean-looking implementation is safe.
