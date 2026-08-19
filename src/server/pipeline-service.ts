@@ -1612,6 +1612,7 @@ async function ensureBookContext(
   let fileName = project.gemini_file_name;
   let fileUri = project.gemini_file_uri;
   if (!fileName || !fileUri) {
+    assertPipelineRunActive(dataDir, claim);
     const uploaded = await adapter.uploadBook(
       resolveBookPath(dataDir, project.book_text_key),
     );
@@ -1624,6 +1625,7 @@ async function ensureBookContext(
 
   let contextInteractionId = project.gemini_context_interaction_id;
   if (!contextInteractionId) {
+    assertPipelineRunActive(dataDir, claim);
     const context = await adapter.createBookContext(fileUri);
     assertPipelineRunActive(dataDir, claim);
     contextInteractionId = context.id;
@@ -1651,6 +1653,7 @@ async function executeStyle(
   const prompt = requestedStyle
     ? `The art style is: "${requestedStyle}". Store it as the canonical visual language for all future prompts. Reply only "Style saved."`
     : "Define an art style that fits the story with a distinctive twist. Return only the art-style prompt that should be applied to future illustration prompts.";
+  assertPipelineRunActive(dataDir, claim);
   const interaction = await adapter.createTextInteraction({
     previousInteractionId: contextInteractionId,
     prompt,
@@ -1692,6 +1695,7 @@ async function executeCharacters(
     );
   }
 
+  assertPipelineRunActive(dataDir, claim);
   const interaction = await adapter.createTextInteraction({
     previousInteractionId,
     prompt:

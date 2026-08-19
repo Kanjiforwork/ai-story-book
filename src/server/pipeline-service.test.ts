@@ -140,6 +140,25 @@ describe("pipeline claims and recovery", () => {
       }),
     ).toThrow(/Complete STYLE/);
 
+    expect(
+      database
+        .prepare(
+          "SELECT active_run_id, attempt_count, status FROM project_steps WHERE project_id = ? AND step_key = 'STYLE'",
+        )
+        .get(project.id),
+    ).toEqual({
+      active_run_id: claim.runId,
+      attempt_count: 1,
+      status: "RUNNING",
+    });
+    expect(
+      database
+        .prepare(
+          "SELECT id, attempt, status FROM pipeline_runs WHERE project_id = ? AND step_key = 'STYLE'",
+        )
+        .get(project.id),
+    ).toEqual({ id: claim.runId, attempt: 1, status: "RUNNING" });
+
     database.close();
     expect(claim.runId).toMatch(/[0-9a-f-]{36}/);
   });
@@ -223,9 +242,12 @@ describe("pipeline claims and recovery", () => {
     database.close();
   });
 
-  it("treats a missing heartbeat as stale and recoverable", () => {
+  it.each([
+    { heartbeat: null, label: "missing" },
+    { heartbeat: "not-a-timestamp", label: "invalid" },
+  ])("treats a $label heartbeat as stale and recoverable", ({ heartbeat }) => {
     const { database, dataDir, project, user } = createFixture();
-    claimPipelineStep(database, {
+    const claim = claimPipelineStep(database, {
       projectId: project.id,
       staleRunMs: 1_000,
       step: "STYLE",
@@ -236,6 +258,13 @@ describe("pipeline claims and recovery", () => {
         "UPDATE project_steps SET heartbeat_at = NULL WHERE project_id = ? AND step_key = 'STYLE'",
       )
       .run(project.id);
+    if (heartbeat !== null) {
+      database
+        .prepare(
+          "UPDATE project_steps SET heartbeat_at = ? WHERE project_id = ? AND step_key = 'STYLE'",
+        )
+        .run(heartbeat, project.id);
+    }
 
     expect(
       getProjectDetail(database, user.id, project.id, dataDir, 1_000)?.steps[0]
@@ -265,11 +294,122 @@ describe("pipeline claims and recovery", () => {
         )
         .get(project.id),
     ).toEqual({ status: "FAILED", error_code: "STALE_RUN" });
+    const retry = claimPipelineStep(database, {
+      projectId: project.id,
+      staleRunMs: 1_000,
+      step: "STYLE",
+      userId: user.id,
+    });
+    expect(retry.runId).not.toBe(claim.runId);
+    expect(retry.attempt).toBe(2);
     database.close();
+  });
+
+  it("does not invoke Gemini after a stale run has been recovered", async () => {
+    const { database, dataDir, project, user } = createFixture();
+    const claim = claimPipelineStep(database, {
+      projectId: project.id,
+      staleRunMs: 1_000,
+      step: "STYLE",
+      userId: user.id,
+    });
+    database
+      .prepare(
+        "UPDATE project_steps SET heartbeat_at = ? WHERE project_id = ? AND step_key = 'STYLE'",
+      )
+      .run(new Date(Date.now() - 5_000).toISOString(), project.id);
+    recoverStalePipelineStep(database, {
+      projectId: project.id,
+      staleRunMs: 1_000,
+      step: "STYLE",
+      userId: user.id,
+    });
+    database.close();
+
+    let geminiCalls = 0;
+    const adapter: GeminiTextAdapter = {
+      modelId: "gemini-3.6-flash",
+      uploadBook: async () => {
+        geminiCalls += 1;
+        return {
+          mimeType: "text/plain",
+          name: "files/book-1",
+          uri: "https://generativelanguage.googleapis.com/v1beta/files/book-1",
+        };
+      },
+      createBookContext: async () => {
+        geminiCalls += 1;
+        return { id: "interaction-book", outputText: "context stored" };
+      },
+      createTextInteraction: async () => {
+        geminiCalls += 1;
+        return { id: "interaction-style", outputText: "Should not run." };
+      },
+    };
+
+    await executePipelineRun({
+      adapter,
+      claim,
+      dataDir,
+      staleRunMs: 1_000,
+    });
+
+    expect(geminiCalls).toBe(0);
   });
 });
 
 describe("mocked text pipeline", () => {
+  it("marks malformed Gemini output failed without persisting partial results", async () => {
+    const fixture = createFixture();
+    const database = fixture.database;
+    const claim = claimPipelineStep(database, {
+      projectId: fixture.project.id,
+      staleRunMs: 120_000,
+      step: "STYLE",
+      userId: fixture.user.id,
+    });
+    database.close();
+
+    let textCalls = 0;
+    const adapter: GeminiTextAdapter = {
+      modelId: "gemini-3.6-flash",
+      uploadBook: async () => ({
+        mimeType: "text/plain",
+        name: "files/book-1",
+        uri: "https://generativelanguage.googleapis.com/v1beta/files/book-1",
+      }),
+      createBookContext: async () => ({
+        id: "interaction-book",
+        outputText: "context stored",
+      }),
+      createTextInteraction: async () => {
+        textCalls += 1;
+        return { id: "interaction-style", outputText: " " };
+      },
+    };
+
+    await executePipelineRun({
+      adapter,
+      claim,
+      dataDir: fixture.dataDir,
+      staleRunMs: 120_000,
+    });
+
+    const finalDatabase = openDatabase(fixture.dataDir);
+    const project = getProjectDetail(
+      finalDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    expect(textCalls).toBe(1);
+    expect(project?.style).toBeNull();
+    expect(project?.characters).toHaveLength(0);
+    expect(project?.steps[0].status).toBe("FAILED");
+    expect(project?.steps[0].run.errorCode).toBe("GEMINI_INVALID_OUTPUT");
+    finalDatabase.close();
+  });
+
   it("persists one source context, style, and at most two characters", async () => {
     const { database, dataDir, project, user } = createFixture();
     const adapter: GeminiTextAdapter = {
@@ -583,6 +723,52 @@ describe("mocked portrait pipeline", () => {
 });
 
 describe("mocked chapter and illustration pipeline", () => {
+  it("enforces the one-chapter cap before illustration execution", () => {
+    const fixture = createFixture();
+    const database = fixture.database;
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        "UPDATE project_steps SET status = 'COMPLETED' WHERE project_id = ? AND step_key IN ('STYLE', 'CHARACTERS', 'PORTRAITS', 'CHAPTERS')",
+      )
+      .run(fixture.project.id);
+    const insertChapter = database.prepare(
+      `
+        INSERT INTO chapters
+          (id, project_id, position, name, prompt, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `,
+    );
+    insertChapter.run(
+      "chapter-one",
+      fixture.project.id,
+      0,
+      "One",
+      "A scene.",
+      now,
+      now,
+    );
+    insertChapter.run(
+      "chapter-two",
+      fixture.project.id,
+      1,
+      "Two",
+      "Another scene.",
+      now,
+      now,
+    );
+
+    expect(() =>
+      claimPipelineStep(database, {
+        projectId: fixture.project.id,
+        staleRunMs: 120_000,
+        step: "ILLUSTRATIONS",
+        userId: fixture.user.id,
+      }),
+    ).toThrow(/at most 1 chapter/);
+    database.close();
+  });
+
   it("persists one chapter, passes portrait references, and completes illustrations", async () => {
     const fixture = createFixture();
     await completeTextPipeline(fixture);
@@ -728,6 +914,211 @@ describe("mocked chapter and illustration pipeline", () => {
       { kind: "PORTRAIT" },
       { kind: "PORTRAIT" },
     ]);
+    finalDatabase.close();
+
+    const restartedDatabase = openDatabase(fixture.dataDir);
+    const afterRestart = getProjectDetail(
+      restartedDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    expect(afterRestart).toEqual(
+      expect.objectContaining({
+        bookText: "A river ran beside the burrow.",
+        style: "Warm painted watercolour.",
+        status: "DONE",
+      }),
+    );
+    expect(afterRestart?.characters).toHaveLength(2);
+    expect(
+      afterRestart?.characters.every(
+        (character) => character.portrait.assetUrl,
+      ),
+    ).toBe(true);
+    expect(afterRestart?.chapters[0].prompt).toContain("Mole and Rat");
+    expect(afterRestart?.chapters[0].illustration.assetUrl).toBe(
+      `/api/assets/${afterRestart?.chapters[0].illustration.assetId}`,
+    );
+    restartedDatabase.close();
+  });
+
+  it("retries chapters and illustrations without losing upstream results", async () => {
+    const fixture = createFixture();
+    await completeTextPipeline(fixture);
+
+    const portraitDatabase = openDatabase(fixture.dataDir);
+    const portraitClaim = claimPipelineStep(portraitDatabase, {
+      projectId: fixture.project.id,
+      staleRunMs: 120_000,
+      step: "PORTRAITS",
+      userId: fixture.user.id,
+    });
+    portraitDatabase.close();
+
+    const imageAdapter: GeminiImageAdapter = {
+      modelId: "gemini-3-pro-image-preview",
+      generatePortrait: async ({ characterName }) => ({
+        bytes: Buffer.from(`${characterName}-portrait`),
+        mimeType: "image/png",
+      }),
+      generateIllustration: async () => ({
+        bytes: Buffer.from("illustration-image"),
+        mimeType: "image/png",
+      }),
+    };
+    await executePipelineRun({
+      claim: portraitClaim,
+      dataDir: fixture.dataDir,
+      imageAdapter,
+      staleRunMs: 120_000,
+    });
+
+    const afterPortraitsDatabase = openDatabase(fixture.dataDir);
+    const afterPortraits = getProjectDetail(
+      afterPortraitsDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    const portraitAssetIds = afterPortraits?.characters.map(
+      (character) => character.portrait.assetId,
+    );
+    const chapterClaim = claimPipelineStep(afterPortraitsDatabase, {
+      projectId: fixture.project.id,
+      staleRunMs: 120_000,
+      step: "CHAPTERS",
+      userId: fixture.user.id,
+    });
+    afterPortraitsDatabase.close();
+
+    const chapterAdapter = (outputText: string): GeminiTextAdapter => ({
+      modelId: "gemini-3.6-flash",
+      uploadBook: async () => ({
+        mimeType: "text/plain",
+        name: "files/book-1",
+        uri: "https://generativelanguage.googleapis.com/v1beta/files/book-1",
+      }),
+      createBookContext: async () => ({
+        id: "interaction-book",
+        outputText: "context stored",
+      }),
+      createTextInteraction: async () => ({
+        id: `interaction-chapters-${outputText.length}`,
+        outputText,
+      }),
+    });
+
+    await executePipelineRun({
+      adapter: chapterAdapter(" "),
+      claim: chapterClaim,
+      dataDir: fixture.dataDir,
+      staleRunMs: 120_000,
+    });
+
+    const afterChapterFailureDatabase = openDatabase(fixture.dataDir);
+    const afterChapterFailure = getProjectDetail(
+      afterChapterFailureDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    expect(afterChapterFailure?.steps[3].status).toBe("FAILED");
+    expect(afterChapterFailure?.chapters).toHaveLength(0);
+    expect(afterChapterFailure?.style).toBe("Warm painted watercolour.");
+    expect(
+      afterChapterFailure?.characters.map(
+        (character) => character.portrait.assetId,
+      ),
+    ).toEqual(portraitAssetIds);
+
+    const chapterRetry = claimPipelineStep(afterChapterFailureDatabase, {
+      projectId: fixture.project.id,
+      staleRunMs: 120_000,
+      step: "CHAPTERS",
+      userId: fixture.user.id,
+    });
+    afterChapterFailureDatabase.close();
+
+    const chapterPrompt = "Mole and Rat meet beside the river at dawn.";
+    await executePipelineRun({
+      adapter: chapterAdapter(
+        JSON.stringify([{ name: "The River", prompt: chapterPrompt }]),
+      ),
+      claim: chapterRetry,
+      dataDir: fixture.dataDir,
+      staleRunMs: 120_000,
+    });
+
+    const afterChapterDatabase = openDatabase(fixture.dataDir);
+    const illustrationClaim = claimPipelineStep(afterChapterDatabase, {
+      projectId: fixture.project.id,
+      staleRunMs: 120_000,
+      step: "ILLUSTRATIONS",
+      userId: fixture.user.id,
+    });
+    afterChapterDatabase.close();
+
+    await executePipelineRun({
+      claim: illustrationClaim,
+      dataDir: fixture.dataDir,
+      imageAdapter: {
+        ...imageAdapter,
+        generateIllustration: async () => {
+          throw new Error("Mock illustration service timed out.");
+        },
+      },
+      staleRunMs: 120_000,
+    });
+
+    const afterIllustrationFailureDatabase = openDatabase(fixture.dataDir);
+    const afterIllustrationFailure = getProjectDetail(
+      afterIllustrationFailureDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    expect(afterIllustrationFailure?.steps[4].status).toBe("FAILED");
+    expect(afterIllustrationFailure?.chapters[0].prompt).toBe(chapterPrompt);
+    expect(
+      afterIllustrationFailure?.characters.map(
+        (character) => character.portrait.assetId,
+      ),
+    ).toEqual(portraitAssetIds);
+
+    const illustrationRetry = claimPipelineStep(
+      afterIllustrationFailureDatabase,
+      {
+        projectId: fixture.project.id,
+        staleRunMs: 120_000,
+        step: "ILLUSTRATIONS",
+        userId: fixture.user.id,
+      },
+    );
+    afterIllustrationFailureDatabase.close();
+
+    await executePipelineRun({
+      claim: illustrationRetry,
+      dataDir: fixture.dataDir,
+      imageAdapter,
+      staleRunMs: 120_000,
+    });
+
+    const finalDatabase = openDatabase(fixture.dataDir);
+    const finalProject = getProjectDetail(
+      finalDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    expect(finalProject?.status).toBe("DONE");
+    expect(finalProject?.style).toBe("Warm painted watercolour.");
+    expect(finalProject?.chapters[0].prompt).toBe(chapterPrompt);
+    expect(finalProject?.chapters[0].illustration.status).toBe("COMPLETED");
+    expect(finalProject?.chapters[0].illustration.attempt).toBe(2);
+    expect(
+      finalProject?.characters.map((character) => character.portrait.assetId),
+    ).toEqual(portraitAssetIds);
     finalDatabase.close();
   });
 

@@ -28,6 +28,28 @@ function illustrationStatusClass(chapter: ChapterView): string {
   return "border-line bg-surface text-ink-muted";
 }
 
+function chapterProgressCopy(chapters: ChapterView[]): string {
+  const completedCount = chapters.filter(
+    (chapter) => chapter.illustration.status === "COMPLETED",
+  ).length;
+  const hasFailure = chapters.some(
+    (chapter) =>
+      chapter.illustration.status === "FAILED" || chapter.illustration.isStale,
+  );
+  const hasRunning = chapters.some(
+    (chapter) => chapter.illustration.status === "RUNNING",
+  );
+
+  if (hasFailure) {
+    return `${completedCount} of ${chapters.length} saved · retry Illustrations above`;
+  }
+  if (hasRunning) return "Generating illustration";
+  if (completedCount === chapters.length) {
+    return `${completedCount} of ${chapters.length} illustration saved`;
+  }
+  return "Chapter prompt saved";
+}
+
 export function ChapterList({ chapters }: { chapters: ChapterView[] }) {
   if (chapters.length === 0) return null;
 
@@ -43,9 +65,7 @@ export function ChapterList({ chapters }: { chapters: ChapterView[] }) {
           </h2>
         </div>
         <p aria-live="polite" className="text-xs text-ink-muted">
-          {chapters[0].illustration.status === "COMPLETED"
-            ? "1 of 1 illustration saved"
-            : "1 chapter prompt saved"}
+          {chapterProgressCopy(chapters)}
         </p>
       </div>
 

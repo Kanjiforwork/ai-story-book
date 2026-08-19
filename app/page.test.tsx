@@ -260,6 +260,86 @@ describe("foundation app shell", () => {
     );
   });
 
+  it("names running and stale recovery states in the step action panel", () => {
+    const runningProject = projectFixture();
+    runningProject.steps[0] = {
+      ...runningProject.steps[0],
+      run: {
+        ...runningProject.steps[0].run,
+        attempt: 1,
+        claimedAt: "2026-01-01T00:00:00.000Z",
+        heartbeatAt: "2026-01-01T00:00:00.000Z",
+      },
+      status: "RUNNING",
+    };
+
+    const { unmount } = render(
+      <ProjectDetail project={runningProject} user={user} />,
+    );
+    expect(
+      screen.getByRole("heading", {
+        name: /reading the book and defining an art style/i,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/progress is saved on the server/i),
+    ).toBeInTheDocument();
+    unmount();
+
+    const staleProject = projectFixture();
+    staleProject.steps[0] = {
+      ...staleProject.steps[0],
+      run: {
+        ...staleProject.steps[0].run,
+        attempt: 1,
+        claimedAt: "2026-01-01T00:00:00.000Z",
+        heartbeatAt: "2026-01-01T00:00:00.000Z",
+        isStale: true,
+      },
+      status: "RUNNING",
+    };
+
+    render(<ProjectDetail project={staleProject} user={user} />);
+    expect(
+      screen.getByRole("button", { name: "Recover run" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      /recover it first; completed earlier work is untouched/i,
+    );
+  });
+
+  it("shows a failed illustration as retryable chapter progress", () => {
+    render(
+      <ChapterList
+        chapters={[
+          {
+            id: "chapter-1",
+            name: "The River",
+            position: 0,
+            prompt: "A single river scene.",
+            illustration: {
+              assetId: null,
+              assetUrl: null,
+              attempt: 1,
+              claimedAt: "2026-01-01T00:00:00.000Z",
+              errorCode: "GEMINI_FAILED",
+              errorMessage: "The image model timed out.",
+              heartbeatAt: "2026-01-01T00:00:00.000Z",
+              isStale: false,
+              status: "FAILED",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getAllByText("Illustration failed")).toHaveLength(2);
+    expect(
+      screen.getByText("0 of 1 saved · retry Illustrations above"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("The image model timed out.")).toBeInTheDocument();
+  });
+
   it("ignores an older polling response after a newer server view wins", async () => {
     vi.useFakeTimers();
     const initial = projectFixture();

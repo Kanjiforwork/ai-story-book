@@ -93,6 +93,14 @@ describe("generated asset security", () => {
         userId: owner.id,
       }),
     ).toBeNull();
+    fs.rmSync(asset.filePath);
+    expect(
+      getOwnedAssetFile(database, {
+        assetId: asset.id,
+        dataDir,
+        userId: owner.id,
+      }),
+    ).toBeNull();
     expect(() =>
       resolveStoredAssetPath(dataDir, "assets/../../secret.txt"),
     ).toThrow(/asset key is invalid/);
