@@ -26,7 +26,14 @@ describe("local SQLite bootstrap", () => {
       .prepare("SELECT value FROM schema_meta WHERE key = ?")
       .get("schema_version") as { value: string } | undefined;
 
-    expect(row?.value).toBe("1");
+    expect(row?.value).toBe("2");
+    expect(
+      database
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+        )
+        .get("project_steps"),
+    ).toBeTruthy();
     expect(fs.existsSync(path.join(directory, "data", "gradion.sqlite"))).toBe(
       true,
     );

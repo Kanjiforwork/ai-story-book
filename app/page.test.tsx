@@ -1,16 +1,23 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
-import Home from "./page";
+import { IdentityForm } from "@/components/identity-form";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({
+    push: vi.fn(),
+    refresh: vi.fn(),
+  }),
+}));
 
 describe("foundation app shell", () => {
   it("shows the studio title and the five-step contract", () => {
-    render(<Home />);
+    render(<IdentityForm />);
 
     expect(
-      screen.getByRole("heading", { name: "Give a story a visual world." }),
+      screen.getByRole("heading", { name: "Welcome to the studio" }),
     ).toBeInTheDocument();
-    expect(screen.getByText("Style")).toBeInTheDocument();
-    expect(screen.getByText("Illustrations")).toBeInTheDocument();
+    expect(screen.getByLabelText("Full name")).toBeInTheDocument();
+    expect(screen.getByLabelText("Email")).toBeInTheDocument();
   });
 });
