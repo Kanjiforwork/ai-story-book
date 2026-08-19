@@ -3,7 +3,11 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { PIPELINE_STEP_LABELS } from "@/domain/pipeline";
+import {
+  PIPELINE_STEP_LABELS,
+  TEXT_PIPELINE_STEPS,
+  isTextPipelineStep,
+} from "@/domain/pipeline";
 import type { ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
 import { CharacterGrid } from "@/components/character-grid";
@@ -31,10 +35,19 @@ export function ProjectDetail({
     null,
   );
   const [actionError, setActionError] = useState<string | null>(null);
+  const textSteps = project.steps.filter((step) =>
+    isTextPipelineStep(step.key),
+  );
   const currentStep =
-    project.steps.find((step) => step.status !== "COMPLETED") ?? null;
+    textSteps.find((step) => step.status !== "COMPLETED") ?? null;
+  const textPipelineComplete =
+    textSteps.length === TEXT_PIPELINE_STEPS.length &&
+    textSteps.every((step) => step.status === "COMPLETED");
   const shouldPoll = project.steps.some(
-    (step) => step.status === "RUNNING" && !step.run.isStale,
+    (step) =>
+      isTextPipelineStep(step.key) &&
+      step.status === "RUNNING" &&
+      !step.run.isStale,
   );
 
   async function refreshProject() {
@@ -202,6 +215,7 @@ export function ProjectDetail({
             onStyleDraftChange={setStyleDraft}
             pending={pendingAction !== null}
             styleDraft={styleDraft}
+            textPipelineComplete={textPipelineComplete}
           />
         </div>
 

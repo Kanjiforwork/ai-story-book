@@ -25,6 +25,7 @@ export function StepActionPanel({
   pending,
   styleDraft,
   onStyleDraftChange,
+  textPipelineComplete = false,
 }: {
   actionError: string | null;
   currentStep: ProjectStepView | null;
@@ -33,6 +34,7 @@ export function StepActionPanel({
   pending: boolean;
   styleDraft: string;
   onStyleDraftChange: (value: string) => void;
+  textPipelineComplete?: boolean;
 }) {
   if (!currentStep) {
     return (
@@ -41,11 +43,14 @@ export function StepActionPanel({
           <span className="flex size-8 items-center justify-center rounded-full bg-ink text-white">
             ✓
           </span>
-          All five steps are complete.
+          {textPipelineComplete
+            ? "Text pipeline complete."
+            : "All pipeline steps are complete."}
         </div>
         <p className="mt-4 text-sm leading-6 text-ink-body">
-          Nothing regenerates automatically. Your generated results remain saved
-          when you return.
+          {textPipelineComplete
+            ? "Style and Characters are saved. Portraits, Chapters, and Illustrations will be added in the next milestones."
+            : "Nothing regenerates automatically. Your generated results remain saved when you return."}
         </p>
       </section>
     );

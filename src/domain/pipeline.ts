@@ -8,11 +8,16 @@ export const PIPELINE_STEPS = [
 
 export type PipelineStep = (typeof PIPELINE_STEPS)[number];
 
+export const TEXT_PIPELINE_STEPS = ["STYLE", "CHARACTERS"] as const;
+
+export type TextPipelineStep = (typeof TEXT_PIPELINE_STEPS)[number];
+
 export type PipelineErrorCode =
   | "STEP_ORDER"
   | "STEP_ALREADY_COMPLETED"
   | "RUN_ALREADY_ACTIVE"
   | "STALE_RUN"
+  | "STEP_NOT_AVAILABLE"
   | "GEMINI_FAILED"
   | "GEMINI_INVALID_OUTPUT";
 
@@ -31,6 +36,12 @@ export const PIPELINE_LIMITS = {
 
 export function isPipelineStep(value: string): value is PipelineStep {
   return (PIPELINE_STEPS as readonly string[]).includes(value);
+}
+
+export function isTextPipelineStep(
+  step: PipelineStep,
+): step is TextPipelineStep {
+  return (TEXT_PIPELINE_STEPS as readonly string[]).includes(step);
 }
 
 export function previousPipelineStep(

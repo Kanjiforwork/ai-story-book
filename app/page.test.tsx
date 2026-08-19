@@ -142,4 +142,20 @@ describe("foundation app shell", () => {
       screen.getByRole("button", { name: /retry style/i }),
     ).toBeInTheDocument();
   });
+
+  it("stops the M2 action panel after Characters", () => {
+    const project = projectFixture();
+    project.completedSteps = 2;
+    project.status = "IN_PROGRESS";
+    project.style = "Warm painted watercolour.";
+    project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
+    project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(screen.getByText("Text pipeline complete.")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /generate portraits/i }),
+    ).not.toBeInTheDocument();
+  });
 });

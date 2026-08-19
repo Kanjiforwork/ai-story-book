@@ -52,7 +52,9 @@ function validateModel(value: string, name: string): string {
 export function loadServerEnv(
   options: {
     requireGeminiKey?: boolean;
+    requireImageModel?: boolean;
     requireModelIds?: boolean;
+    requireTextModel?: boolean;
   } = {},
 ): ServerEnv {
   const geminiApiKey = process.env.GEMINI_API_KEY?.trim() || undefined;
@@ -66,12 +68,16 @@ export function loadServerEnv(
   }
   if (geminiApiKey) validateApiKey(geminiApiKey);
 
-  if (options.requireModelIds && !geminiTextModel) {
+  const requireTextModel = options.requireTextModel || options.requireModelIds;
+  const requireImageModel =
+    options.requireImageModel || options.requireModelIds;
+
+  if (requireTextModel && !geminiTextModel) {
     throw new EnvironmentValidationError([
       "GEMINI_TEXT_MODEL is required for live/UAT validation.",
     ]);
   }
-  if (options.requireModelIds && !geminiImageModel) {
+  if (requireImageModel && !geminiImageModel) {
     throw new EnvironmentValidationError([
       "GEMINI_IMAGE_MODEL is required for live/UAT validation.",
     ]);

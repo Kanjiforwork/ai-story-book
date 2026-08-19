@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { EnvironmentValidationError } from "@/server/env";
+import { EnvironmentValidationError, loadServerEnv } from "@/server/env";
 import { validateEnvExample } from "@/server/env-example";
+
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 const EMPTY_ENV_EXAMPLE = `
 GEMINI_API_KEY=
@@ -25,5 +29,15 @@ describe("environment contract", () => {
         ),
       ),
     ).toThrow(EnvironmentValidationError);
+  });
+
+  it("does not require the image model for the text pipeline", () => {
+    vi.stubEnv("GEMINI_API_KEY", "a-valid-gemini-key-with-more-than-20-chars");
+    vi.stubEnv("GEMINI_TEXT_MODEL", "gemini-3.6-flash");
+    vi.stubEnv("GEMINI_IMAGE_MODEL", "");
+
+    expect(() =>
+      loadServerEnv({ requireGeminiKey: true, requireTextModel: true }),
+    ).not.toThrow();
   });
 });

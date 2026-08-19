@@ -78,6 +78,28 @@ describe("pipeline claims and recovery", () => {
     expect(claim.runId).toMatch(/[0-9a-f-]{36}/);
   });
 
+  it("does not claim a later milestone before it is implemented", () => {
+    const { database, project, user } = createFixture();
+
+    expect(() =>
+      claimPipelineStep(database, {
+        projectId: project.id,
+        staleRunMs: 120_000,
+        step: "PORTRAITS",
+        userId: user.id,
+      }),
+    ).toThrow(/not available in M2/);
+
+    expect(
+      database
+        .prepare(
+          "SELECT status FROM project_steps WHERE project_id = ? AND step_key = 'PORTRAITS'",
+        )
+        .get(project.id),
+    ).toEqual({ status: "PENDING" });
+    database.close();
+  });
+
   it("recovers a stale run without invoking Gemini and allows retry", () => {
     const { database, project, user } = createFixture();
     claimPipelineStep(database, {

@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import type Database from "better-sqlite3";
 
 import {
+  isTextPipelineStep,
   previousPipelineStep,
   type PipelineErrorCode,
   type PipelineStep,
@@ -108,6 +109,13 @@ export function claimPipelineStep(
   },
 ): StepClaim {
   return database.transaction(() => {
+    if (!isTextPipelineStep(input.step)) {
+      throw new PipelineStateError(
+        "STEP_NOT_AVAILABLE",
+        "This pipeline step is not available in M2 yet.",
+      );
+    }
+
     const row = getStepRow(database, input.userId, input.projectId, input.step);
     if (!row) {
       throw new PipelineStateError("NOT_FOUND", "Project step not found.");
@@ -195,6 +203,13 @@ export function recoverStalePipelineStep(
   },
 ): void {
   database.transaction(() => {
+    if (!isTextPipelineStep(input.step)) {
+      throw new PipelineStateError(
+        "STEP_NOT_AVAILABLE",
+        "This pipeline step is not available in M2 yet.",
+      );
+    }
+
     const row = getStepRow(database, input.userId, input.projectId, input.step);
     if (!row) {
       throw new PipelineStateError("NOT_FOUND", "Project step not found.");
@@ -270,6 +285,22 @@ function heartbeatPipelineRun(dataDir: string, claim: StepClaim): void {
       )
       .run(now, claim.runId);
   });
+}
+
+function assertPipelineRunActive(dataDir: string, claim: StepClaim): void {
+  const active = withDatabaseAt(dataDir, (database) =>
+    database
+      .prepare(
+        "SELECT 1 FROM project_steps WHERE project_id = ? AND step_key = ? AND active_run_id = ? AND status = 'RUNNING'",
+      )
+      .get(claim.projectId, claim.step, claim.runId),
+  );
+  if (!active) {
+    throw new PipelineStateError(
+      "STALE_RUN",
+      "This run is no longer active. Recover it before retrying.",
+    );
+  }
 }
 
 function persistGeminiContext(
@@ -578,6 +609,7 @@ async function ensureBookContext(
     const uploaded = await adapter.uploadBook(
       resolveBookPath(dataDir, project.book_text_key),
     );
+    assertPipelineRunActive(dataDir, claim);
     fileName = uploaded.name;
     fileUri = uploaded.uri;
     persistGeminiFile(dataDir, claim, { fileName, fileUri });
@@ -587,6 +619,7 @@ async function ensureBookContext(
   let contextInteractionId = project.gemini_context_interaction_id;
   if (!contextInteractionId) {
     const context = await adapter.createBookContext(fileUri);
+    assertPipelineRunActive(dataDir, claim);
     contextInteractionId = context.id;
     persistGeminiContext(dataDir, claim, {
       contextInteractionId,
@@ -610,7 +643,7 @@ async function executeStyle(
 ): Promise<void> {
   const contextInteractionId = await ensureBookContext(dataDir, claim, adapter);
   const prompt = requestedStyle
-    ? `The art style will be: "${requestedStyle}". Keep it in mind when generating future prompts. Do not answer yet; wait for the next instruction.`
+    ? `The art style is: "${requestedStyle}". Store it as the canonical visual language for all future prompts. Reply only "Style saved."`
     : "Define an art style that fits the story with a distinctive twist. Return only the art-style prompt that should be applied to future illustration prompts.";
   const interaction = await adapter.createTextInteraction({
     previousInteractionId: contextInteractionId,
@@ -682,7 +715,7 @@ export async function executePipelineRun(input: {
       createGeminiTextAdapter(
         loadServerEnv({
           requireGeminiKey: true,
-          requireModelIds: true,
+          requireTextModel: true,
         }),
       );
     if (input.claim.step === "STYLE") {
@@ -696,8 +729,8 @@ export async function executePipelineRun(input: {
       await executeCharacters(input.dataDir, input.claim, adapter);
     } else {
       throw new PipelineStateError(
-        "STEP_ORDER",
-        "This milestone only runs Style and Characters.",
+        "STEP_NOT_AVAILABLE",
+        "This pipeline step is not available in M2 yet.",
       );
     }
   } catch (error) {
