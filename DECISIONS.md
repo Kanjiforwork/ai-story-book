@@ -26,6 +26,14 @@ The detail page must make the current step, partial image progress, errors, retr
 
 When the implementation agent proposes its first UX flow, update this entry with the actual AI suggestion and the human override.
 
+## Working decision: demo as the UX floor, not the runtime implementation
+
+**Status:** Direction agreed; AI-override evidence pending.
+
+Use `app-demo.html` to define the minimum visual scope, screens, interaction coverage, and state naming. Do not copy its localStorage store, fake timers, placeholder images, fake timings, or one-tab duplicate guard into the real app. The accepted cost is that the real UI needs more explicit components and state tests, but the result will represent the actual server/Gemini behavior instead of a polished prototype with misleading guarantees.
+
+When the implementation agent proposes its first component structure or attempts to reuse demo behavior, update this entry with the actual proposal and the correction made.
+
 ## Decisions still to settle during planning
 
 - Gemini notebook mechanics: file/document input, context chaining, structured output, current model IDs, and image limits.

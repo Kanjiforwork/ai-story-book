@@ -36,6 +36,16 @@ If sources conflict, call out the conflict and follow the higher-priority source
 - After approval, write `docs/plan.md` and keep it aligned with the approved scope.
 - Do not copy the demo's `localStorage`, fake timers, fake images, or fake numbers into the real application.
 
+## Design contract
+
+- Read `DESIGN.md` before changing any page, component, layout, styling, interaction, navigation, or UI copy.
+- Treat `docs/reference/app-demo.html` as the visual and interaction baseline: cover everything it demonstrates and match or exceed its polish.
+- Preserve the demo's warm Gradion paper/ink/orange language unless a deliberate design decision explains the change.
+- Build typed, domain-named components with clear state boundaries. Keep data fetching, Gemini calls, database access, filesystem access, and ownership checks outside presentational components.
+- Add loading, empty, error, disabled, success, focus, partial-progress, and stale-recovery states as part of the component contract—not as a later polish pass.
+- The demo's fake behavior is explicitly out of scope for production: no localStorage pipeline, fake timers, placeholder assets, or client-only duplicate guard.
+- Before accepting a UI slice, verify representative mobile/desktop widths, keyboard flow, focus visibility, text wrapping, reduced motion, and the primary failure path.
+
 ## Product constraints
 
 - Use a real Gemini API key from the environment; never expose or commit it.
