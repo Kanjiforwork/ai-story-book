@@ -12,6 +12,7 @@ import {
   SESSION_TTL_SECONDS,
 } from "@/server/auth";
 import { errorResponse } from "@/server/api";
+import { getSessionToken } from "@/server/request-auth";
 import { withDatabase } from "@/server/storage";
 
 export const runtime = "nodejs";
@@ -65,10 +66,4 @@ export async function DELETE(request: Request) {
   } catch (error) {
     return errorResponse(error);
   }
-}
-
-function getSessionToken(request: Request): string | undefined {
-  const cookieHeader = request.headers.get("cookie");
-  const match = cookieHeader?.match(/(?:^|;\s*)gradion_session=([^;]+)/);
-  return match ? decodeURIComponent(match[1]) : undefined;
 }

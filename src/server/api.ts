@@ -21,9 +21,5 @@ export function errorResponse(error: unknown): NextResponse {
     "API request failed",
     error instanceof Error ? error.message : error,
   );
-  return jsonError(
-    "INTERNAL_ERROR",
-    "Something went wrong while saving your project. Try again.",
-    500,
-  );
+  return jsonError("INTERNAL_ERROR", "Something went wrong. Try again.", 500);
 }

@@ -81,6 +81,7 @@ export function ProjectList({
                   <span
                     aria-label={`${project.completedSteps} of ${project.totalSteps} steps complete`}
                     className="flex items-center gap-1.5"
+                    role="img"
                   >
                     {Array.from({ length: project.totalSteps }, (_, index) => (
                       <span

@@ -10,6 +10,7 @@ import {
   hashSessionToken,
   revokeSession,
 } from "@/server/auth";
+import { getAuthenticatedUser } from "@/server/request-auth";
 import { openDatabase } from "@/server/storage";
 
 const temporaryDirectories: string[] = [];
@@ -54,6 +55,22 @@ describe("passwordless session persistence", () => {
 
     revokeSession(database, first.token);
     expect(findUserBySessionToken(database, first.token)).toBeNull();
+    database.close();
+  });
+
+  it("treats malformed cookie encoding as an anonymous request", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "gradion-auth-cookie-test-"),
+    );
+    temporaryDirectories.push(directory);
+    const database = openDatabase(path.join(directory, "data"));
+
+    const request = new Request("http://localhost/api/projects", {
+      headers: { cookie: "gradion_session=%E0%A4%A" },
+    });
+
+    expect(() => getAuthenticatedUser(database, request)).not.toThrow();
+    expect(getAuthenticatedUser(database, request)).toBeNull();
     database.close();
   });
 });

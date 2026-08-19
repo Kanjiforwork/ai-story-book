@@ -79,12 +79,22 @@ function selectProjectRows(
           p.title,
           p.book_text_key,
           p.created_at,
-          GROUP_CONCAT(ps.status, ',') AS step_statuses
+          (
+            SELECT GROUP_CONCAT(ordered_steps.status, ',')
+            FROM (
+              SELECT status
+              FROM project_steps
+              WHERE project_id = p.id
+              ORDER BY position ASC
+            ) AS ordered_steps
+          ) AS step_statuses
         FROM projects p
-        INNER JOIN project_steps ps ON ps.project_id = p.id
-        WHERE p.user_id = @userId ${whereProject}
-        GROUP BY p.id
-        ORDER BY p.created_at DESC
+        WHERE p.user_id = @userId
+          ${whereProject}
+          AND EXISTS (
+            SELECT 1 FROM project_steps ps WHERE ps.project_id = p.id
+          )
+        ORDER BY p.created_at DESC, p.id DESC
       `,
     )
     .all({ userId, projectId }) as ProjectRow[];

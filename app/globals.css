@@ -3,6 +3,7 @@
 :root {
   --grad-orange: #ff6b00;
   --grad-orange-hover: #e85f00;
+  --grad-orange-deep: #3a160a;
   --grad-ink: #231f20;
   --grad-ink-body: #595959;
   --grad-ink-muted: #919699;
@@ -15,6 +16,7 @@
 @theme inline {
   --color-orange: var(--grad-orange);
   --color-orange-hover: var(--grad-orange-hover);
+  --color-orange-deep: var(--grad-orange-deep);
   --color-ink: var(--grad-ink);
   --color-ink-body: var(--grad-ink-body);
   --color-ink-muted: var(--grad-ink-muted);

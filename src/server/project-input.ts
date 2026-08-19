@@ -30,12 +30,17 @@ export async function parseProjectInput(
   }
 
   if (contentType.includes("multipart/form-data")) {
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      throw new ValidationError("Send a valid multipart project payload.");
+    }
     const file = formData.get("file");
-    if (file && typeof file !== "string" && "arrayBuffer" in file) {
+    if (isUploadedFile(file)) {
       return {
         title: formData.get("title"),
-        bookText: await decodeTextUpload(file as File),
+        bookText: await decodeTextUpload(file),
       };
     }
 
@@ -48,5 +53,14 @@ export async function parseProjectInput(
 
   throw new ValidationError(
     "Use JSON or multipart form data to create a project.",
+  );
+}
+
+function isUploadedFile(value: FormDataEntryValue | null): value is File {
+  return (
+    value !== null &&
+    typeof value !== "string" &&
+    typeof value.name === "string" &&
+    typeof value.arrayBuffer === "function"
   );
 }

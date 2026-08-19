@@ -31,7 +31,8 @@ export async function decodeTextUpload(file: File): Promise<string> {
   if (!filename.endsWith(".txt")) {
     throw new ValidationError("Upload a plain .txt file.");
   }
-  if (file.type && file.type !== "text/plain") {
+  const mediaType = file.type.split(";", 1)[0].trim().toLowerCase();
+  if (mediaType && mediaType !== "text/plain") {
     throw new ValidationError("Upload a plain text file.");
   }
   if (file.size > MAX_TEXT_UPLOAD_BYTES) {

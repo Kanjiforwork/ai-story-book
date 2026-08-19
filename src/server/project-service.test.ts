@@ -51,6 +51,19 @@ describe("project persistence", () => {
     expect(
       getProjectDetail(database, "another-user", project.id, dataDir),
     ).toBeNull();
+
+    database
+      .prepare(
+        "UPDATE project_steps SET status = 'COMPLETED' WHERE project_id = ? AND step_key IN ('STYLE', 'CHARACTERS')",
+      )
+      .run(project.id);
+    expect(listProjects(database, user.id)[0]).toEqual(
+      expect.objectContaining({
+        completedSteps: 2,
+        status: "IN_PROGRESS",
+      }),
+    );
+
     database.close();
   });
 });
