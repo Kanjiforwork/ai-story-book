@@ -80,6 +80,7 @@ export function CharacterGrid({
                     fill
                     sizes="(min-width: 768px) 40vw, 100vw"
                     src={character.portrait.assetUrl}
+                    unoptimized
                   />
                 ) : (
                   <div className="flex h-full items-center justify-center px-6 text-center">

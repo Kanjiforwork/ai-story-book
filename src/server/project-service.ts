@@ -112,8 +112,7 @@ function toStepRunView(
     : Number.NaN;
   const isStale =
     row.status === "RUNNING" &&
-    Number.isFinite(heartbeatTime) &&
-    now - heartbeatTime > staleRunMs;
+    (!Number.isFinite(heartbeatTime) || now - heartbeatTime > staleRunMs);
 
   return {
     attempt: row.attempt_count,
@@ -135,8 +134,7 @@ function toPortraitView(
     : Number.NaN;
   const isStale =
     row.portrait_status === "RUNNING" &&
-    Number.isFinite(heartbeatTime) &&
-    now - heartbeatTime > staleRunMs;
+    (!Number.isFinite(heartbeatTime) || now - heartbeatTime > staleRunMs);
 
   return {
     attempt: row.portrait_attempt_count,
@@ -163,8 +161,7 @@ function toIllustrationView(
     : Number.NaN;
   const isStale =
     row.illustration_status === "RUNNING" &&
-    Number.isFinite(heartbeatTime) &&
-    now - heartbeatTime > staleRunMs;
+    (!Number.isFinite(heartbeatTime) || now - heartbeatTime > staleRunMs);
 
   return {
     attempt: row.illustration_attempt_count,

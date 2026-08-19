@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   IMPLEMENTED_PIPELINE_STEPS,
@@ -39,6 +39,7 @@ export function ProjectDetail({
   const [retryingCharacterId, setRetryingCharacterId] = useState<string | null>(
     null,
   );
+  const latestRefreshId = useRef(0);
   const implementedSteps = project.steps.filter((step) =>
     isImplementedPipelineStep(step.key),
   );
@@ -56,6 +57,8 @@ export function ProjectDetail({
   const portraitStep = project.steps.find((step) => step.key === "PORTRAITS");
 
   async function refreshProject() {
+    const refreshId = latestRefreshId.current + 1;
+    latestRefreshId.current = refreshId;
     try {
       const response = await fetch(`/api/projects/${project.id}`, {
         cache: "no-store",
@@ -64,12 +67,14 @@ export function ProjectDetail({
         message?: string;
         project?: ProjectDetailView;
       };
+      if (refreshId !== latestRefreshId.current) return;
       if (!response.ok || !payload.project) {
         setActionError(payload.message ?? "We could not refresh this project.");
         return;
       }
       setProject(payload.project);
     } catch {
+      if (refreshId !== latestRefreshId.current) return;
       setActionError("The server could not be reached. Try again.");
     }
   }

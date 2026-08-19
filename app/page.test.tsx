@@ -1,8 +1,16 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SignOutButton } from "@/components/sign-out-button";
 import { IdentityForm } from "@/components/identity-form";
+import { ChapterList } from "@/components/chapter-list";
 import { ProjectDetail } from "@/components/project-detail";
 import { CharacterGrid } from "@/components/character-grid";
 import type { ProjectDetailView } from "@/domain/project";
@@ -16,7 +24,9 @@ vi.mock("next/navigation", () => ({
 }));
 
 afterEach(() => {
+  cleanup();
   vi.unstubAllGlobals();
+  vi.useRealTimers();
 });
 
 const user: AuthenticatedUser = {
@@ -213,5 +223,110 @@ describe("foundation app shell", () => {
       screen.getByRole("button", { name: "Retry portrait" }),
     ).toBeInTheDocument();
     expect(screen.getByText(/1 of 2 saved/)).toBeInTheDocument();
+    expect(screen.getByAltText("Portrait of Mole")).toHaveAttribute(
+      "src",
+      "/api/assets/asset-1",
+    );
+  });
+
+  it("renders private illustration assets without the Next image optimizer", () => {
+    render(
+      <ChapterList
+        chapters={[
+          {
+            id: "chapter-1",
+            name: "The River",
+            position: 0,
+            prompt: "A single river scene.",
+            illustration: {
+              assetId: "asset-illustration-1",
+              assetUrl: "/api/assets/asset-illustration-1",
+              attempt: 1,
+              claimedAt: "2026-01-01T00:00:00.000Z",
+              errorCode: null,
+              errorMessage: null,
+              heartbeatAt: "2026-01-01T00:00:00.000Z",
+              isStale: false,
+              status: "COMPLETED",
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(screen.getByAltText("Illustration for The River")).toHaveAttribute(
+      "src",
+      "/api/assets/asset-illustration-1",
+    );
+  });
+
+  it("ignores an older polling response after a newer server view wins", async () => {
+    vi.useFakeTimers();
+    const initial = projectFixture();
+    initial.steps[0] = {
+      ...initial.steps[0],
+      run: {
+        ...initial.steps[0].run,
+        attempt: 1,
+        claimedAt: "2026-01-01T00:00:00.000Z",
+        heartbeatAt: "2026-01-01T00:00:00.000Z",
+      },
+      status: "RUNNING",
+    };
+    const completed = {
+      ...initial,
+      completedSteps: 1,
+      status: "IN_PROGRESS" as const,
+      steps: initial.steps.map((step, index) =>
+        index === 0 ? { ...step, status: "COMPLETED" as const } : step,
+      ),
+      style: "Warm painted watercolour.",
+    };
+    let resolveFirst!: (value: unknown) => void;
+    let resolveSecond!: (value: unknown) => void;
+    const firstResponse = new Promise((resolve) => {
+      resolveFirst = resolve;
+    });
+    const secondResponse = new Promise((resolve) => {
+      resolveSecond = resolve;
+    });
+    const fetchMock = vi
+      .fn()
+      .mockImplementationOnce(() => firstResponse)
+      .mockImplementationOnce(() => secondResponse);
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProjectDetail project={initial} user={user} />);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5_000);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+
+    await act(async () => {
+      resolveSecond({
+        ok: true,
+        json: async () => ({ project: completed }),
+      });
+      await Promise.resolve();
+    });
+    expect(
+      screen.getByRole("button", { name: /generate characters/i }),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFirst({
+        ok: true,
+        json: async () => ({ project: initial }),
+      });
+      await Promise.resolve();
+    });
+
+    expect(
+      screen.getByRole("button", { name: /generate characters/i }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /generate style/i }),
+    ).not.toBeInTheDocument();
   });
 });

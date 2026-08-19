@@ -2,6 +2,9 @@ import { GoogleGenAI } from "@google/genai";
 
 import type { ServerEnv } from "@/server/env";
 
+const FILE_PROCESSING_POLL_MS = 1_000;
+const FILE_PROCESSING_TIMEOUT_MS = 60_000;
+
 export type GeminiUploadedFile = {
   name: string;
   uri: string;
@@ -55,6 +58,38 @@ function toTextInteraction(value: unknown): GeminiTextInteraction {
   return { id, outputText };
 }
 
+async function waitForUploadedFile(
+  client: GoogleGenAI,
+  file: {
+    error?: { message?: string };
+    mimeType?: string;
+    name?: string;
+    state?: string;
+    uri?: string;
+  },
+): Promise<typeof file> {
+  const deadline = Date.now() + FILE_PROCESSING_TIMEOUT_MS;
+  let current = file;
+
+  while (current.state !== "ACTIVE") {
+    if (current.state === "FAILED") {
+      throw new GeminiError(
+        current.error?.message ?? "Gemini could not process the book file.",
+      );
+    }
+    if (!current.name || Date.now() >= deadline) {
+      throw new GeminiError("Gemini book file processing timed out.");
+    }
+
+    await new Promise((resolve) =>
+      setTimeout(resolve, FILE_PROCESSING_POLL_MS),
+    );
+    current = await client.files.get({ name: current.name });
+  }
+
+  return current;
+}
+
 export function createGeminiTextAdapter(env: ServerEnv): GeminiTextAdapter {
   if (!env.geminiApiKey || !env.geminiTextModel) {
     throw new GeminiError(
@@ -70,10 +105,14 @@ export function createGeminiTextAdapter(env: ServerEnv): GeminiTextAdapter {
 
     async uploadBook(filePath) {
       try {
-        const file = await client.files.upload({
+        const uploadedFile = await client.files.upload({
           file: filePath,
           config: { displayName: "source-book.txt", mimeType: "text/plain" },
         });
+        if (!uploadedFile.name || !uploadedFile.uri) {
+          throw new GeminiError("Gemini did not return a reusable file URI.");
+        }
+        const file = await waitForUploadedFile(client, uploadedFile);
         if (!file.name || !file.uri) {
           throw new GeminiError("Gemini did not return a reusable file URI.");
         }

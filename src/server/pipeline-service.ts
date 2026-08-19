@@ -118,7 +118,7 @@ function assertFreshRun(
 ): void {
   if (row.status !== "RUNNING") return;
   const heartbeat = heartbeatAt ? Date.parse(heartbeatAt) : Number.NaN;
-  if (Number.isFinite(heartbeat) && Date.now() - heartbeat > staleRunMs) {
+  if (!Number.isFinite(heartbeat) || Date.now() - heartbeat > staleRunMs) {
     throw new PipelineStateError(
       "STALE_RUN",
       "This step has gone stale. Recover it before retrying.",
@@ -424,7 +424,7 @@ export function recoverStalePipelineStep(
       ? Date.parse(heartbeat.heartbeat_at)
       : Number.NaN;
     if (
-      !Number.isFinite(heartbeatTime) ||
+      Number.isFinite(heartbeatTime) &&
       Date.now() - heartbeatTime <= input.staleRunMs
     ) {
       throw new PipelineStateError(

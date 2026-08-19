@@ -163,7 +163,6 @@ export function createGeminiImageAdapter(env: ServerEnv): GeminiImageAdapter {
           config: {
             imageConfig: {
               aspectRatio: "3:4",
-              personGeneration: "ALLOW_ADULT",
             },
             responseModalities: ["IMAGE"],
           },
@@ -199,7 +198,6 @@ export function createGeminiImageAdapter(env: ServerEnv): GeminiImageAdapter {
           config: {
             imageConfig: {
               aspectRatio: "16:9",
-              personGeneration: "ALLOW_ADULT",
             },
             responseModalities: ["IMAGE"],
           },

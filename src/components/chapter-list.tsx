@@ -65,6 +65,7 @@ export function ChapterList({ chapters }: { chapters: ChapterView[] }) {
                     fill
                     sizes="(min-width: 1024px) 55vw, 100vw"
                     src={chapter.illustration.assetUrl}
+                    unoptimized
                   />
                 ) : (
                   <div className="flex h-full min-h-52 items-center justify-center px-6 text-center">

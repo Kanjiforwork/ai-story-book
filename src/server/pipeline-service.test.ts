@@ -222,6 +222,51 @@ describe("pipeline claims and recovery", () => {
     ).toBe(2);
     database.close();
   });
+
+  it("treats a missing heartbeat as stale and recoverable", () => {
+    const { database, dataDir, project, user } = createFixture();
+    claimPipelineStep(database, {
+      projectId: project.id,
+      staleRunMs: 1_000,
+      step: "STYLE",
+      userId: user.id,
+    });
+    database
+      .prepare(
+        "UPDATE project_steps SET heartbeat_at = NULL WHERE project_id = ? AND step_key = 'STYLE'",
+      )
+      .run(project.id);
+
+    expect(
+      getProjectDetail(database, user.id, project.id, dataDir, 1_000)?.steps[0]
+        .run.isStale,
+    ).toBe(true);
+
+    expect(() =>
+      claimPipelineStep(database, {
+        projectId: project.id,
+        staleRunMs: 1_000,
+        step: "STYLE",
+        userId: user.id,
+      }),
+    ).toThrow(/stale/);
+
+    recoverStalePipelineStep(database, {
+      projectId: project.id,
+      staleRunMs: 1_000,
+      step: "STYLE",
+      userId: user.id,
+    });
+
+    expect(
+      database
+        .prepare(
+          "SELECT status, error_code FROM project_steps WHERE project_id = ? AND step_key = 'STYLE'",
+        )
+        .get(project.id),
+    ).toEqual({ status: "FAILED", error_code: "STALE_RUN" });
+    database.close();
+  });
 });
 
 describe("mocked text pipeline", () => {
