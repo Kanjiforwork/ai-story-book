@@ -1,52 +1,31 @@
 # Engineering Decisions
 
-Here are six decisions I made while building the app. Some came from pushing back on AI, and some came from AI catching things I had missed.
+These are six decisions I actually made while building the app. In the first four, I pushed back on Codex. In the last two, Codex caught things I had missed.
 
-## 1. Use SQLite instead of JSON files
+## 1. SQLite instead of JSON
 
-- **AI suggested:** Keep the local app simple by saving everything in JSON files.
-- **I chose:** Use SQLite for projects, steps, attempts, and image status. The book text and generated images still stay as normal files.
-- **Why:** Two tabs can try to update the same project at the same time. SQLite makes those updates much safer and easier to test.
-- **Downside:** The app has a small database and a schema to maintain.
+Codex suggested JSON because this is a small local app. I did not think it was enough. Two tabs can update the same project, and I need to lock a step before calling Gemini. I used SQLite for the app state and kept the book text and images as normal files. It adds a schema and one dependency, but the state is much safer to update.
 
-## 2. Track steps, attempts, and images separately
+## 2. More than one status
 
-- **AI suggested:** Give each pipeline step one status and use that for everything.
-- **I changed it:** Track the step, each attempt, and each image separately. The server also leaves a heartbeat while Gemini is working.
-- **Why:** If one portrait fails, the portrait that already finished should not disappear. The heartbeat also lets the app notice when a run has stopped responding.
-- **Downside:** There is more state to save and more cases to test.
+Codex suggested one status for each step. That gets confusing when one portrait is done, another fails, and the user is already on attempt two. I separated step progress, attempt history, and each image's status. I also added a heartbeat so the app can recover a run that stops responding. It means more fields and tests, but partial results no longer get lost.
 
-## 3. Keep attempt history tied to the right project
+## 3. Two kinds of attempt history
 
-- **AI suggested:** Show one universal attempt history inside every project page.
-- **I changed it:** Each project page only shows attempts from that project. I also added a separate `Attempts` tab for the full history across all projects, with links back to each project.
-- **Why:** Mixing every attempt into the current project was confusing. Users should immediately know which book an attempt belongs to.
-- **Downside:** The app now has two history views to maintain, but each one has a clear purpose.
+Codex first showed every attempt inside every project page. It was hard to tell which attempt belonged to which book. I changed the project page to show only that project's attempts, then added a separate `Attempts` tab for everything. The global list links back to the right project. There are now two small views to maintain, but both make sense at a glance.
 
-## 4. Keep the workspace focused on the artwork
+## 4. Less status UI, more artwork
 
-- **AI suggested:** Add a large status panel with elapsed time, an item count, and a progress bar.
-- **I changed it:** Put one clear action in the header and show loading directly where each image will appear.
-- **Why:** The extra status panel made the page feel busy. The artwork and the next action are the things users care about most.
-- **Downside:** There is no timer or overall progress bar on the page.
+Codex suggested a big status card with a timer, item count, and progress bar. It took up too much space and made the page feel generic. I moved the main action to the header and show loading inside the image that is being generated. The page is much cleaner, although there is no overall timer or progress bar anymore.
 
-## 5. Do not keep private images in the browser cache
+## 5. Do not cache private images for a year
 
-- **My first approach:** Let the browser keep generated images for a year so they would load faster.
-- **AI caught:** Even though the images were marked private, the browser could still reuse its saved copy after logout or an ownership change.
-- **I changed it:** The browser must ask the server for the image each time, so the server can check ownership again.
-- **Downside:** Images may be downloaded again, but that is a reasonable trade-off for this small local app.
+I originally cached generated images for a year so they would load faster. Codex pointed out that the same browser could still show a cached image after logout or an ownership change. I switched the response to `private, no-store`, so the server checks access again whenever the image is opened. The image may download again, but that is fine for a local app.
 
-## 6. Respect reduced-motion settings
+## 6. Respect reduced motion
 
-- **My first approach:** Use a spinning circle whenever an image is generating.
-- **AI caught:** The circle kept spinning even when a user had asked their device to reduce motion.
-- **I changed it:** Stop the animation for those users, while keeping the loading message visible.
-- **Downside:** They get less visual movement, but they can still clearly see that the app is working.
+My loading circle always spun. Codex caught that it still moved when the user had reduced motion turned on. I fixed the CSS so the circle stays still for those users, while the loading text stays visible. It is less animated, but it still says what the app is doing.
 
 ## If I had one more day
 
-I would add:
-
-- A short tutorial that explains the five steps to non-technical users.
-- A few subtle, reduced-motion-friendly animations so step changes and new results feel more alive.
+I would add a short tutorial for non-technical users and a few subtle animations. The tutorial would make the five steps easier to follow, and the animations would make the site feel more alive without adding more features.
