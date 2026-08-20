@@ -45,11 +45,16 @@ describe("project request parsing", () => {
       }),
     );
 
-    expect(input.bookText).toMatch(/^STAVE I:  MARLEY'S GHOST/);
-    expect(input.bookText).toContain("MARLEY was dead");
+    expect(input.bookText).toMatch(/^MARLEY was dead: to begin with\./);
+    expect(input.bookText).not.toContain("STAVE I:  MARLEY'S GHOST");
     expect(input.bookText).not.toContain("PROJECT GUTENBERG EBOOK");
     expect(input.bookText).not.toContain("PREFACE");
     expect(input.bookText).not.toContain("CONTENTS");
+    expect(input.bookText.split("\n\n", 1)[0]).not.toContain("\n");
+    expect(input.bookText).toContain(
+      "There is no doubt whatever about that. The register of his burial was signed",
+    );
+    expect(input.bookText).toContain("door-nail.\n\nMind!");
     expect(input.bookText.length).toBeLessThanOrEqual(200_000);
   });
 
@@ -65,9 +70,15 @@ describe("project request parsing", () => {
       }),
     );
 
-    expect(input.bookText).toMatch(/^STORY OF THE DOOR/);
+    expect(input.bookText).toMatch(/^Mr\. Utterson the lawyer/);
+    expect(input.bookText).not.toContain("STORY OF THE DOOR");
     expect(input.bookText).not.toContain("Project Gutenberg");
     expect(input.bookText).not.toContain("Contents");
+    expect(input.bookText.split("\n\n", 1)[0]).not.toContain("\n");
+    expect(input.bookText).toContain(
+      "rugged countenance that was never lighted by a smile",
+    );
+    expect(input.bookText).toContain("demeanour.\n\nNo doubt");
   });
 
   it("rejects unknown sample IDs and ambiguous book sources", async () => {

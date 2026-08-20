@@ -43,6 +43,11 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.font-editorial {
+  font-family: Georgia, "Times New Roman", serif;
+  font-weight: 400;
+}
+
 button,
 a {
   -webkit-tap-highlight-color: transparent;
@@ -83,6 +88,23 @@ a:focus-visible {
   }
 }
 
+.image-generation-spinner {
+  display: block;
+  width: 24px;
+  height: 24px;
+  flex-shrink: 0;
+  border: 3px solid var(--grad-line);
+  border-top-color: var(--grad-orange);
+  border-radius: 999px;
+  animation: gradion-spin 900ms linear infinite;
+}
+
+@keyframes gradion-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
@@ -97,5 +119,9 @@ a:focus-visible {
     width: 100%;
     animation: none !important;
     transform: none;
+  }
+
+  .image-generation-spinner {
+    animation: gradion-spin 900ms linear infinite !important;
   }
 }

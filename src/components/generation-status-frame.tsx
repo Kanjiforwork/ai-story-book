@@ -30,7 +30,7 @@ export function GenerationStatusFrame({
     <section
       aria-live={isLive || isAlert ? "polite" : undefined}
       aria-label={progressLabel}
-      className="rounded-[1.25rem] border border-line/45 bg-surface px-5 py-5 shadow-[0_10px_28px_rgba(35,31,32,0.045)] sm:px-6 sm:py-6"
+      className="rounded-xl border border-line/50 bg-surface p-5 shadow-[0_2px_8px_rgba(35,31,32,0.04)]"
       role={isAlert ? "alert" : "status"}
     >
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
@@ -38,7 +38,7 @@ export function GenerationStatusFrame({
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-orange">
             {eyebrow}
           </p>
-          <p className="mt-3 max-w-3xl text-[15px] leading-6 text-ink">
+          <p className="mt-2 max-w-3xl text-[15px] leading-6 text-ink">
             {message}
           </p>
         </div>
@@ -48,7 +48,7 @@ export function GenerationStatusFrame({
       </div>
 
       {progress === "running" ? (
-        <div className="mt-5">
+        <div className="mt-4">
           <div
             aria-label={`Progress for ${eyebrow.toLowerCase()}`}
             className="relative h-1.5 overflow-hidden rounded-full bg-orange/15"
@@ -63,7 +63,7 @@ export function GenerationStatusFrame({
       ) : null}
 
       {progress !== "running" && (action || detail || notice) ? (
-        <div className="mt-5 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+        <div className="mt-4 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
           {detail || notice ? (
             <p
               className={`min-w-0 flex-1 text-sm leading-6 ${notice ? "text-orange-deep" : "text-ink-muted"}`}
@@ -75,7 +75,7 @@ export function GenerationStatusFrame({
           )}
           {action ? (
             <button
-              className="group inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg px-2 text-sm font-bold text-orange-deep transition hover:bg-orange/10 hover:text-orange focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15 disabled:cursor-wait disabled:opacity-60"
+              className="group inline-flex min-h-11 shrink-0 items-center gap-2 rounded-lg bg-orange px-5 text-sm font-bold text-white shadow-[0_2px_6px_rgba(255,107,0,0.2)] transition hover:bg-orange-hover focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/20 disabled:cursor-wait disabled:opacity-60"
               disabled={action.disabled}
               onClick={action.onClick}
               type="button"

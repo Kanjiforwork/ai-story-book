@@ -11,16 +11,38 @@ const SAMPLE_BOOK_SOURCES: Record<
 > = {
   "a-christmas-carol": {
     filename: "a-christmas-carol.txt",
-    storyStart: "STAVE I:  MARLEY'S GHOST",
+    storyStart: "MARLEY was dead: to begin with.",
   },
   "jekyll-and-hyde": {
     filename: "jekyll-and-hyde.txt",
-    storyStart: "STORY OF THE DOOR",
+    storyStart: "Mr. Utterson the lawyer was a man of a rugged countenance",
   },
 };
 
 function isSampleBookId(value: string): value is SampleBookId {
   return SAMPLE_BOOKS.some((book) => book.id === value);
+}
+
+function reflowSampleBookText(value: string): string {
+  return value
+    .replace(/\r\n?/g, "\n")
+    .trim()
+    .split(/\n{2,}/)
+    .map((block) => {
+      const lines = block.split("\n");
+      if (lines.some((line) => /^\s/.test(line))) {
+        return lines.map((line) => line.trimEnd()).join("\n");
+      }
+
+      return lines.reduce((paragraph, line) => {
+        const text = line.trim();
+        if (!paragraph) return text;
+        return paragraph.endsWith("-")
+          ? `${paragraph}${text}`
+          : `${paragraph} ${text}`;
+      }, "");
+    })
+    .join("\n\n");
 }
 
 function extractStoryText(rawText: string, storyStartMarker: string): string {
@@ -35,7 +57,9 @@ function extractStoryText(rawText: string, storyStartMarker: string): string {
   if (storyStart < 0 || storyStart >= end) {
     throw new Error("Sample book story marker is invalid.");
   }
-  return normalizeBookText(rawText.slice(storyStart, end));
+  return normalizeBookText(
+    reflowSampleBookText(rawText.slice(storyStart, end)),
+  );
 }
 
 export function loadSampleBook(sampleBookId: string): {

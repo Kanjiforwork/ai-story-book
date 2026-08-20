@@ -49,4 +49,4 @@ The external call begins only after SQLite atomically creates and persists a ste
 
 ## If I had one more day
 
-I would build single-image art direction: let the user edit a character or chapter prompt and regenerate only that portrait or illustration, while keeping the previous successful image until the replacement succeeds. The current retry flow is safe for failures, but it does not help when a technically valid image is simply not the image the user wants.
+I would add a small focal-point control for generated images. Edited single-image prompts and item-level retries now cover art direction, and square chapter generation matches the completed-project layout, but a technically valid image can still place its subject away from the preferred crop. A persisted focal point would let the user correct presentation without spending another image-generation call.

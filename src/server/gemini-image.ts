@@ -67,8 +67,9 @@ function buildIllustrationPrompt(input: {
     .join("\n\n");
 
   return [
-    "Create one landscape scene illustration for a book chapter.",
+    "Create one square 1:1 scene illustration for a book chapter.",
     "Use the provided portrait images as explicit visual references so the adult characters remain consistent.",
+    "Compose the scene for a square frame. Keep every important character, face, and story action inside the central safe area with comfortable space around the edges.",
     "Create a single full illustration with no text, title, labels, logos, border, watermark, panels, or decorative lettering.",
     "Keep the scene suitable for a general audience and use the saved art style as the visual language.",
     `Saved art style: ${input.style}`,
@@ -197,7 +198,7 @@ export function createGeminiImageAdapter(env: ServerEnv): GeminiImageAdapter {
           model: modelId,
           config: {
             imageConfig: {
-              aspectRatio: "16:9",
+              aspectRatio: "1:1",
             },
             responseModalities: ["IMAGE"],
           },

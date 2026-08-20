@@ -1,9 +1,10 @@
 import Image from "next/image";
 import { useState } from "react";
 
-import type { CharacterView } from "@/domain/project";
+import { ImageGenerationSpinner } from "@/components/image-generation-spinner";
 import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 import { ResultFramePlaceholder } from "@/components/result-frame-placeholder";
+import type { CharacterView } from "@/domain/project";
 
 function promptPreview(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
@@ -98,7 +99,11 @@ export function CharacterGrid({
                 key={character.id}
               >
                 <div className="relative aspect-[3/4] w-full overflow-hidden bg-paper">
-                  {character.portrait.assetUrl ? (
+                  {character.portrait.status === "RUNNING" ? (
+                    <ImageGenerationSpinner
+                      label={`Generating portrait for ${character.name}…`}
+                    />
+                  ) : character.portrait.assetUrl ? (
                     <Image
                       alt={`Portrait of ${character.name}`}
                       className="object-cover"

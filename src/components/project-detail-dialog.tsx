@@ -89,7 +89,7 @@ export function ProjectDetailDialog({
           </h2>
           <button
             aria-label="Close dialog"
-            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-xl leading-none text-ink-body transition hover:bg-paper hover:text-ink"
+            className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-xl text-xl leading-none text-ink-body transition hover:bg-paper hover:text-ink focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange/30"
             onClick={onClose}
             ref={closeButtonRef}
             type="button"

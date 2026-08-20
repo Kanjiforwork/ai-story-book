@@ -50,6 +50,7 @@ export function normalizeProjectTitle(value: unknown): string {
 }
 
 export const MAX_STYLE_CHARACTERS = 500;
+export const MAX_GENERATION_PROMPT_CHARACTERS = 4_000;
 
 export function normalizeOptionalStyle(value: unknown): string {
   if (value === undefined || value === null) return "";
@@ -64,4 +65,18 @@ export function normalizeOptionalStyle(value: unknown): string {
     );
   }
   return style;
+}
+
+export function normalizeGenerationPrompt(value: unknown): string {
+  if (typeof value !== "string") {
+    throw new ValidationError("Prompt is required.");
+  }
+
+  const prompt = value.trim();
+  if (!prompt || prompt.length > MAX_GENERATION_PROMPT_CHARACTERS) {
+    throw new ValidationError(
+      `Prompt must be between 1 and ${MAX_GENERATION_PROMPT_CHARACTERS.toLocaleString("en-US")} characters.`,
+    );
+  }
+  return prompt;
 }

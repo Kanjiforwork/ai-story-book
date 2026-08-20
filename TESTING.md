@@ -2,9 +2,9 @@
 
 ## Strategy
 
-Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions and upgrades, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, expired-source reupload, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Sample-book tests cover allowlisted server loading, removal of Gutenberg boilerplate and pre-story front matter, input caps, invalid IDs, and ambiguous sources. Attempt-history tests cover project filtering, newest-first ordering, and user ownership. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
+Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions and upgrades, mocked Gemini adapters, local asset storage, edited image-prompt retries, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, expired-source reupload, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Sample-book tests cover allowlisted server loading, removal of Gutenberg boilerplate and pre-story front matter, input caps, invalid IDs, and ambiguous sources. Attempt-history tests cover project filtering, newest-first ordering, and user ownership. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
 
-Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, project-scoped attempt history, the global attempt-to-project link, hidden generation-run controls, sample-book submission, neutral saved-output rendering, code-native missing-media frames, one-line prompt previews with full source/style and prompt dialogs, running and stale copy, retry affordances, private non-cacheable asset responses, item progress, compact completion, bounded media, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, visible focus treatment, and the absence of generation-run copy. The revised project and global Attempts surfaces were rechecked in an isolated production fixture at effective 433px and 1600px widths: both matched their viewport width without horizontal overflow, navigation remained visible, project links resolved correctly, and the sample preview began at `STAVE I` rather than front matter.
+Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, project-scoped attempt history, the global attempt-to-project link, hidden generation-run controls, sample-book submission, neutral saved-output rendering, code-native missing-media frames, one-line prompt previews with editable retry dialogs, per-image generation spinners, full source/style dialogs, running and stale copy, retry affordances, private non-cacheable asset responses, item progress, compact completion, bounded media, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, visible focus treatment, and the absence of generation-run copy. The revised project and global Attempts surfaces were rechecked in an isolated production fixture at effective 433px and 1600px widths: both matched their viewport width without horizontal overflow, navigation remained visible, project links resolved correctly, and the sample preview began at `STAVE I` rather than front matter.
 
 ## Manual real-Gemini smoke
 
@@ -17,8 +17,8 @@ Commands were run sequentially from `/Users/bao/GitHub/ai-story-book`.
 ### `npm test`
 
 ```text
-Test Files  15 passed (15)
-Tests       80 passed (80)
+Test Files  16 passed (16)
+Tests       88 passed (88)
 ```
 
 ### `npm run check`
@@ -73,6 +73,8 @@ Covered by automated tests unless marked otherwise:
 - A long in-flight Gemini call refreshes its persisted heartbeat and does not become falsely stale.
 - Recovering a stale run prevents the old runner from making a Gemini call in the checked race path.
 - Explicit retry creates a new step attempt inside the selected generation run and increments the attempt.
+- A completed latest run accepts an edited portrait or illustration prompt, while older generation runs stay read-only.
+- Regeneration keeps the previous asset persisted, shows a loading fallback while running, replaces the asset only on success, and restores the previous image with a failure badge if the retry fails.
 - Portrait partial success preserves completed assets.
 - Portrait retry runs only failed items.
 - Chapter and illustration retries preserve upstream style, character, portrait, and chapter results.

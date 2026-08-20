@@ -78,6 +78,13 @@ describe("Gemini image adapter", () => {
             }
           ).config.imageConfig,
       ),
-    ).toEqual([{ aspectRatio: "3:4" }, { aspectRatio: "16:9" }]);
+    ).toEqual([{ aspectRatio: "3:4" }, { aspectRatio: "1:1" }]);
+    expect(
+      (
+        generateContentMock.mock.calls[1][0] as {
+          contents: Array<{ parts: Array<{ text?: string }> }>;
+        }
+      ).contents[0].parts[0].text,
+    ).toContain("central safe area");
   });
 });

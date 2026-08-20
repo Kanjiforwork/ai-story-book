@@ -163,6 +163,91 @@ describe("pipeline claims and recovery", () => {
     expect(claim.runId).toMatch(/[0-9a-f-]{36}/);
   });
 
+  it("edits a completed chapter prompt while preserving its current illustration", () => {
+    const { dataDir, database, project, user } = createFixture();
+    const generationRunId = project.activeGenerationRunId as string;
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        "UPDATE project_steps SET status = 'COMPLETED' WHERE project_id = ? AND generation_run_id = ?",
+      )
+      .run(project.id, generationRunId);
+    database
+      .prepare(
+        "UPDATE generation_runs SET status = 'COMPLETED', completed_at = ? WHERE id = ?",
+      )
+      .run(now, generationRunId);
+    database
+      .prepare(
+        `INSERT INTO assets
+          (id, project_id, generation_run_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
+         VALUES (?, ?, ?, 'ILLUSTRATION', ?, 'image/png', 4, 'old-checksum', ?, ?)`,
+      )
+      .run(
+        "old-illustration",
+        project.id,
+        generationRunId,
+        "assets/old-illustration.png",
+        now,
+        now,
+      );
+    database
+      .prepare(
+        `INSERT INTO chapters
+          (id, project_id, generation_run_id, position, name, prompt,
+           illustration_status, illustration_asset_id, created_at, updated_at)
+         VALUES (?, ?, ?, 0, 'The River', 'Old prompt', 'COMPLETED', ?, ?, ?)`,
+      )
+      .run(
+        "chapter-1",
+        project.id,
+        generationRunId,
+        "old-illustration",
+        now,
+        now,
+      );
+
+    expect(getProjectDetail(database, user.id, project.id, dataDir)).toEqual(
+      expect.objectContaining({
+        selectedRunReadOnly: false,
+        generationRuns: [
+          expect.objectContaining({ isWritable: true, status: "COMPLETED" }),
+        ],
+      }),
+    );
+
+    const claim = claimPipelineStep(database, {
+      allowCompletedItemRetry: true,
+      editedPrompt: "A revised dawn scene with warmer light.",
+      illustrationChapterId: "chapter-1",
+      projectId: project.id,
+      staleRunMs: 120_000,
+      step: "ILLUSTRATIONS",
+      userId: user.id,
+    });
+
+    expect(
+      database
+        .prepare(
+          "SELECT prompt, illustration_status, illustration_asset_id FROM chapters WHERE id = ?",
+        )
+        .get("chapter-1"),
+    ).toEqual({
+      illustration_asset_id: "old-illustration",
+      illustration_status: "RUNNING",
+      prompt: "A revised dawn scene with warmer light.",
+    });
+    expect(
+      database
+        .prepare(
+          "SELECT status, completed_at FROM generation_runs WHERE id = ?",
+        )
+        .get(generationRunId),
+    ).toEqual({ completed_at: null, status: "ACTIVE" });
+    expect(claim.attempt).toBe(1);
+    database.close();
+  });
+
   it("opens Portraits only after Characters and keeps later steps locked", () => {
     const { database, project, user } = createFixture();
 
@@ -561,6 +646,111 @@ describe("mocked text pipeline", () => {
 });
 
 describe("mocked portrait pipeline", () => {
+  it("keeps the previous portrait when an edited-prompt retry fails", async () => {
+    const fixture = createFixture();
+    await completeTextPipeline(fixture);
+
+    const portraitDatabase = openDatabase(fixture.dataDir);
+    const portraitClaim = claimPipelineStep(portraitDatabase, {
+      projectId: fixture.project.id,
+      staleRunMs: 120_000,
+      step: "PORTRAITS",
+      userId: fixture.user.id,
+    });
+    portraitDatabase.close();
+
+    const successAdapter: GeminiImageAdapter = {
+      modelId: "gemini-3-pro-image-preview",
+      generatePortrait: async ({ characterName }) => ({
+        bytes: Buffer.from(`${characterName}-portrait`),
+        mimeType: "image/png",
+      }),
+      generateIllustration: async () => ({
+        bytes: Buffer.from("illustration"),
+        mimeType: "image/png",
+      }),
+    };
+    await executePipelineRun({
+      claim: portraitClaim,
+      dataDir: fixture.dataDir,
+      imageAdapter: successAdapter,
+      staleRunMs: 120_000,
+    });
+
+    const retryDatabase = openDatabase(fixture.dataDir);
+    const beforeRetry = getProjectDetail(
+      retryDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    const character = beforeRetry?.characters[0];
+    const previousAssetId = character?.portrait.assetId;
+    const editedPrompt = `${character?.prompt} Add a bright red scarf.`;
+    const retryClaim = claimPipelineStep(retryDatabase, {
+      allowCompletedItemRetry: true,
+      editedPrompt,
+      portraitCharacterId: character?.id,
+      projectId: fixture.project.id,
+      staleRunMs: 120_000,
+      step: "PORTRAITS",
+      userId: fixture.user.id,
+    });
+    const duringRetry = getProjectDetail(
+      retryDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    expect(duringRetry?.characters[0]).toEqual(
+      expect.objectContaining({
+        prompt: editedPrompt,
+        portrait: expect.objectContaining({
+          assetId: previousAssetId,
+          status: "RUNNING",
+        }),
+      }),
+    );
+    retryDatabase.close();
+
+    let receivedPrompt = "";
+    await executePipelineRun({
+      claim: retryClaim,
+      dataDir: fixture.dataDir,
+      imageAdapter: {
+        ...successAdapter,
+        generatePortrait: async ({ characterPrompt }) => {
+          receivedPrompt = characterPrompt;
+          throw new Error("Edited portrait retry failed.");
+        },
+      },
+      portraitCharacterId: character?.id,
+      staleRunMs: 120_000,
+    });
+
+    const failedDatabase = openDatabase(fixture.dataDir);
+    const afterFailure = getProjectDetail(
+      failedDatabase,
+      fixture.user.id,
+      fixture.project.id,
+      fixture.dataDir,
+    );
+    expect(receivedPrompt).toBe(editedPrompt);
+    expect(afterFailure?.characters[0]).toEqual(
+      expect.objectContaining({
+        prompt: editedPrompt,
+        portrait: expect.objectContaining({
+          assetId: previousAssetId,
+          status: "FAILED",
+        }),
+      }),
+    );
+    expect(afterFailure?.attemptHistory[0]).toEqual(
+      expect.objectContaining({ status: "FAILED", step: "PORTRAITS" }),
+    );
+    failedDatabase.close();
+  });
+
   it("persists partial success and retries only the failed portrait", async () => {
     const fixture = createFixture();
     await completeTextPipeline(fixture);

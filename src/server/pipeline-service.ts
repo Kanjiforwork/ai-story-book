@@ -9,7 +9,10 @@ import {
   previousPipelineStep,
   type PipelineStep,
 } from "@/domain/pipeline";
-import { normalizeOptionalStyle } from "@/domain/validation";
+import {
+  normalizeGenerationPrompt,
+  normalizeOptionalStyle,
+} from "@/domain/validation";
 import { loadServerEnv } from "@/server/env";
 import {
   CHARACTER_RESPONSE_FORMAT,
@@ -128,6 +131,7 @@ function selectPortraitItems(
   projectId: string,
   generationRunId: string,
   characterId?: string,
+  allowCompletedItemRetry = false,
 ): PortraitSelectionRow[] {
   const rows = database
     .prepare(
@@ -163,7 +167,10 @@ function selectPortraitItems(
   if (characterId && selected.length === 0) {
     throw new PipelineStateError("NOT_FOUND", "Character not found.");
   }
-  if (selected.some((row) => row.portrait_status === "COMPLETED")) {
+  if (
+    !allowCompletedItemRetry &&
+    selected.some((row) => row.portrait_status === "COMPLETED")
+  ) {
     throw new PipelineStateError(
       "STEP_ALREADY_COMPLETED",
       "This portrait is already complete.",
@@ -188,6 +195,8 @@ function selectIllustrationItems(
   database: Database.Database,
   projectId: string,
   generationRunId: string,
+  chapterId?: string,
+  allowCompletedItemRetry = false,
 ): IllustrationSelectionRow[] {
   const rows = database
     .prepare(
@@ -217,9 +226,21 @@ function selectIllustrationItems(
     );
   }
 
-  const selected = rows.filter(
-    (row) => row.illustration_status !== "COMPLETED",
-  );
+  const selected = chapterId
+    ? rows.filter((row) => row.id === chapterId)
+    : rows.filter((row) => row.illustration_status !== "COMPLETED");
+  if (chapterId && selected.length === 0) {
+    throw new PipelineStateError("NOT_FOUND", "Chapter not found.");
+  }
+  if (
+    !allowCompletedItemRetry &&
+    selected.some((row) => row.illustration_status === "COMPLETED")
+  ) {
+    throw new PipelineStateError(
+      "STEP_ALREADY_COMPLETED",
+      "This illustration is already complete.",
+    );
+  }
   if (selected.some((row) => row.illustration_status === "RUNNING")) {
     throw new PipelineStateError(
       "RUN_ALREADY_ACTIVE",
@@ -244,9 +265,16 @@ export function claimPipelineStep(
     userId: string;
     staleRunMs: number;
     portraitCharacterId?: string;
+    illustrationChapterId?: string;
+    allowCompletedItemRetry?: boolean;
+    editedPrompt?: string;
   },
 ): StepClaim {
   return database.transaction(() => {
+    const editedPrompt =
+      input.editedPrompt === undefined
+        ? undefined
+        : normalizeGenerationPrompt(input.editedPrompt);
     if (!isImplementedPipelineStep(input.step)) {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
@@ -254,7 +282,20 @@ export function claimPipelineStep(
       );
     }
 
+    const imageItemRetry = Boolean(
+      input.allowCompletedItemRetry &&
+      ((input.step === "PORTRAITS" && input.portraitCharacterId) ||
+        (input.step === "ILLUSTRATIONS" && input.illustrationChapterId)),
+    );
+    if (input.allowCompletedItemRetry && !imageItemRetry) {
+      throw new PipelineStateError(
+        "STEP_NOT_AVAILABLE",
+        "Completed retries require one portrait or chapter illustration.",
+      );
+    }
+
     const generationRunId = getActiveGenerationRunId(database, {
+      allowLatestCompletedRun: imageItemRetry,
       projectId: input.projectId,
       requestedRunId: input.generationRunId,
       userId: input.userId,
@@ -270,7 +311,7 @@ export function claimPipelineStep(
       throw new PipelineStateError("NOT_FOUND", "Project step not found.");
     }
 
-    if (row.status === "COMPLETED") {
+    if (row.status === "COMPLETED" && !imageItemRetry) {
       throw new PipelineStateError(
         "STEP_ALREADY_COMPLETED",
         "This step is already complete.",
@@ -309,14 +350,63 @@ export function claimPipelineStep(
             input.projectId,
             generationRunId,
             input.portraitCharacterId,
+            imageItemRetry,
           )
         : [];
     const illustrationItems =
       input.step === "ILLUSTRATIONS"
-        ? selectIllustrationItems(database, input.projectId, generationRunId)
+        ? selectIllustrationItems(
+            database,
+            input.projectId,
+            generationRunId,
+            input.illustrationChapterId,
+            imageItemRetry,
+          )
         : [];
 
     const now = new Date().toISOString();
+    if (editedPrompt !== undefined) {
+      const promptUpdate =
+        input.step === "PORTRAITS" && input.portraitCharacterId
+          ? database
+              .prepare(
+                `UPDATE characters
+                 SET prompt = ?, updated_at = ?
+                 WHERE project_id = ? AND generation_run_id = ? AND id = ?`,
+              )
+              .run(
+                editedPrompt,
+                now,
+                input.projectId,
+                generationRunId,
+                input.portraitCharacterId,
+              )
+          : input.step === "ILLUSTRATIONS" && input.illustrationChapterId
+            ? database
+                .prepare(
+                  `UPDATE chapters
+                   SET prompt = ?, updated_at = ?
+                   WHERE project_id = ? AND generation_run_id = ? AND id = ?`,
+                )
+                .run(
+                  editedPrompt,
+                  now,
+                  input.projectId,
+                  generationRunId,
+                  input.illustrationChapterId,
+                )
+            : null;
+      if (!promptUpdate) {
+        throw new PipelineStateError(
+          "STEP_NOT_AVAILABLE",
+          "Only portrait and illustration prompts can be edited here.",
+        );
+      }
+      if (promptUpdate.changes !== 1) {
+        throw new PipelineStateError("NOT_FOUND", "Prompt target not found.");
+      }
+    }
+
     const runId = randomUUID();
     const attempt = row.attempt_count + 1;
 
@@ -362,6 +452,13 @@ export function claimPipelineStep(
         generationRunId,
         input.step,
       );
+    database
+      .prepare(
+        `UPDATE generation_runs
+         SET status = 'ACTIVE', completed_at = NULL, updated_at = ?
+         WHERE id = ? AND project_id = ?`,
+      )
+      .run(now, generationRunId, input.projectId);
 
     if (input.step === "PORTRAITS") {
       const updatePortrait = database.prepare(

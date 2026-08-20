@@ -1,9 +1,10 @@
 import Image from "next/image";
 import { useState } from "react";
 
-import type { ChapterView } from "@/domain/project";
+import { ImageGenerationSpinner } from "@/components/image-generation-spinner";
 import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 import { ResultFramePlaceholder } from "@/components/result-frame-placeholder";
+import type { ChapterView } from "@/domain/project";
 
 function promptPreview(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
@@ -108,8 +109,10 @@ export function ChapterList({
               key={chapter.id}
             >
               <div className="grid lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
-                <div className="relative aspect-[16/10] w-full overflow-hidden bg-paper">
-                  {chapter.illustration.assetUrl ? (
+                <div className="relative aspect-square w-full overflow-hidden bg-paper">
+                  {chapter.illustration.status === "RUNNING" ? (
+                    <ImageGenerationSpinner label="Generating illustration…" />
+                  ) : chapter.illustration.assetUrl ? (
                     <Image
                       alt={`Illustration for ${chapter.name}`}
                       className="object-cover"

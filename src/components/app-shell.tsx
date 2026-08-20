@@ -23,32 +23,26 @@ export function AppShell({
   return (
     <div className="min-h-svh bg-canvas text-ink">
       <header className="border-b border-line/60 bg-surface">
-        <div className="mx-auto flex max-w-5xl flex-wrap items-center gap-x-4 gap-y-2 px-5 py-4 sm:px-8">
-          <Link className="flex min-h-11 items-center gap-3" href="/projects">
-            <span
-              aria-hidden="true"
-              className="flex size-9 items-center justify-center rounded-full bg-orange text-sm font-black text-white"
-            >
-              G
-            </span>
+        <div className="mx-auto flex max-w-[90rem] flex-wrap items-center gap-x-7 gap-y-2 px-5 py-4 sm:px-8">
+          <Link className="flex min-h-11 items-center" href="/projects">
             <span>
-              <span className="block text-xs font-bold tracking-[0.18em] text-ink-body">
+              <span className="block text-sm font-black tracking-[0.24em] text-orange">
                 GRADION
               </span>
-              <span className="block text-xs text-ink-muted">
+              <span className="mt-0.5 block text-xs text-ink-muted">
                 Book Illustration Studio
               </span>
             </span>
           </Link>
           <nav
             aria-label="Main navigation"
-            className="order-3 flex w-full gap-1 border-t border-line/50 pt-2 sm:order-none sm:ml-4 sm:w-auto sm:border-0 sm:pt-0"
+            className="order-3 flex w-full gap-6 border-t border-line/50 pt-2 sm:order-none sm:w-auto sm:border-0 sm:pt-0"
           >
             <Link
               aria-current={
                 activeNavigation === "projects" ? "page" : undefined
               }
-              className={`rounded-lg px-3 py-2 text-sm font-semibold transition hover:bg-paper hover:text-ink ${activeNavigation === "projects" ? "bg-paper text-ink" : "text-ink-body"}`}
+              className={`relative inline-flex min-h-11 items-center px-1 text-sm font-semibold transition hover:text-ink ${activeNavigation === "projects" ? "text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-orange" : "text-ink-body"}`}
               href="/projects"
             >
               Projects
@@ -57,7 +51,7 @@ export function AppShell({
               aria-current={
                 activeNavigation === "attempts" ? "page" : undefined
               }
-              className={`rounded-lg px-3 py-2 text-sm font-semibold transition hover:bg-paper hover:text-ink ${activeNavigation === "attempts" ? "bg-paper text-ink" : "text-ink-body"}`}
+              className={`relative inline-flex min-h-11 items-center px-1 text-sm font-semibold transition hover:text-ink ${activeNavigation === "attempts" ? "text-ink after:absolute after:inset-x-0 after:bottom-0 after:h-0.5 after:bg-orange" : "text-ink-body"}`}
               href="/attempts"
             >
               Attempts
@@ -70,7 +64,7 @@ export function AppShell({
             >
               {initials}
             </span>
-            <span className="hidden max-w-32 truncate text-sm text-ink-body sm:block">
+            <span className="hidden max-w-40 truncate text-sm text-ink-body sm:block">
               {user.name}
             </span>
             <SignOutButton />

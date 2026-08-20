@@ -1,5 +1,9 @@
-import Link from "next/link";
+"use client";
 
+import Link from "next/link";
+import { useState } from "react";
+
+import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 import { PIPELINE_STEP_LABELS } from "@/domain/pipeline";
 import type { ProjectAttemptHistoryItem } from "@/domain/project";
 
@@ -121,30 +125,45 @@ export function ProjectAttemptHistory({
 }: {
   attempts: ProjectAttemptHistoryItem[];
 }) {
+  const [open, setOpen] = useState(false);
+
   if (attempts.length === 0) return null;
 
   return (
-    <details className="group mt-6 rounded-2xl border border-line/60 bg-surface">
-      <summary className="flex min-h-16 cursor-pointer list-none items-center justify-between gap-4 rounded-2xl px-4 py-3 outline-none transition hover:bg-paper focus-visible:ring-4 focus-visible:ring-orange/15 sm:px-5 [&::-webkit-details-marker]:hidden">
+    <>
+      <button
+        aria-haspopup="dialog"
+        className="group flex min-h-14 w-full items-center justify-between gap-4 border-t border-line/60 py-3 text-left outline-none transition hover:text-orange focus-visible:ring-4 focus-visible:ring-orange/15"
+        onClick={() => setOpen(true)}
+        type="button"
+      >
         <span>
-          <span className="block text-lg font-semibold text-ink">
+          <span className="block text-xs font-bold uppercase tracking-[0.12em] text-ink-muted transition group-hover:text-orange">
             Attempt history
           </span>
-          <span className="mt-1 block text-sm text-ink-muted">
+          <span className="mt-0.5 block text-xs text-ink-muted">
             {attempts.length} saved{" "}
             {attempts.length === 1 ? "attempt" : "attempts"}
           </span>
         </span>
         <span
           aria-hidden="true"
-          className="text-xl text-ink-muted transition-transform group-open:rotate-180"
+          className="text-base text-orange transition-transform group-hover:translate-x-0.5"
         >
-          ↓
+          →
         </span>
-      </summary>
-      <div className="border-t border-line/60 bg-canvas/40 p-3 sm:p-4">
+      </button>
+      <ProjectDetailDialog
+        onClose={() => setOpen(false)}
+        open={open}
+        title="Attempt history"
+      >
+        <p className="mb-4 text-xs font-bold uppercase tracking-[0.12em] text-ink-muted">
+          {attempts.length} saved{" "}
+          {attempts.length === 1 ? "attempt" : "attempts"}
+        </p>
         <AttemptHistoryList attempts={attempts} />
-      </div>
-    </details>
+      </ProjectDetailDialog>
+    </>
   );
 }

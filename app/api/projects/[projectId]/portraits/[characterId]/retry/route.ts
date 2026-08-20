@@ -5,7 +5,10 @@ import { loadServerEnv } from "@/server/env";
 import { claimPipelineStep, startPipelineRun } from "@/server/pipeline-service";
 import { getAuthenticatedUser } from "@/server/request-auth";
 import { withDatabase } from "@/server/storage";
-import { ValidationError } from "@/domain/validation";
+import {
+  normalizeGenerationPrompt,
+  ValidationError,
+} from "@/domain/validation";
 
 export const runtime = "nodejs";
 
@@ -20,6 +23,7 @@ export async function POST(
   try {
     const { characterId, projectId } = await params;
     let generationRunId: string;
+    let prompt: string;
     if (!request.body) {
       throw new ValidationError("Generation run is required.");
     }
@@ -34,6 +38,9 @@ export async function POST(
           throw new ValidationError("Generation run is invalid.");
         }
         generationRunId = value;
+        prompt = normalizeGenerationPrompt(
+          (body as Record<string, unknown>).prompt,
+        );
       } catch (error) {
         if (error instanceof ValidationError) throw error;
         throw new ValidationError("Send a valid portrait payload.");
@@ -45,6 +52,8 @@ export async function POST(
       if (!user) return null;
       const claim = claimPipelineStep(database, {
         generationRunId,
+        allowCompletedItemRetry: true,
+        editedPrompt: prompt,
         portraitCharacterId: characterId,
         projectId,
         staleRunMs: env.staleRunMs,

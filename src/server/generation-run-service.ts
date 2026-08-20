@@ -25,6 +25,7 @@ type GenerationRunRow = {
   updated_at: string;
   completed_at: string | null;
   active_generation_run_id: string;
+  latest_generation_run_id: string;
   completed_steps: number;
 };
 
@@ -103,7 +104,10 @@ function toRunView(row: GenerationRunRow): GenerationRunView {
     totalSteps: PIPELINE_STEPS.length,
     isSelected: row.id === row.active_generation_run_id,
     isWritable:
-      row.id === row.active_generation_run_id && row.status === "ACTIVE",
+      row.id === row.active_generation_run_id &&
+      (row.status === "ACTIVE" ||
+        (row.status === "COMPLETED" &&
+          row.id === row.latest_generation_run_id)),
   };
 }
 
@@ -151,6 +155,10 @@ export function listGenerationRuns(
           gr.style_revision, gr.prompt_version, gr.text_model_id, gr.image_model_id,
           gr.status, gr.created_at, gr.updated_at, gr.completed_at,
           p.active_generation_run_id,
+          (SELECT newest.id FROM generation_runs newest
+            WHERE newest.project_id = gr.project_id
+            ORDER BY newest.created_at DESC, newest.id DESC
+            LIMIT 1) AS latest_generation_run_id,
           (SELECT COUNT(*) FROM project_steps ps
             WHERE ps.generation_run_id = gr.id AND ps.status = 'COMPLETED') AS completed_steps
        FROM generation_runs gr
@@ -284,6 +292,10 @@ export function selectGenerationRun(
             gr.style_revision, gr.prompt_version, gr.text_model_id, gr.image_model_id,
             gr.status, gr.created_at, gr.updated_at, gr.completed_at,
             p.active_generation_run_id,
+            (SELECT newest.id FROM generation_runs newest
+              WHERE newest.project_id = gr.project_id
+              ORDER BY newest.created_at DESC, newest.id DESC
+              LIMIT 1) AS latest_generation_run_id,
             (SELECT COUNT(*) FROM project_steps ps
               WHERE ps.generation_run_id = gr.id AND ps.status = 'COMPLETED') AS completed_steps
          FROM generation_runs gr
@@ -324,7 +336,12 @@ export function selectGenerationRun(
 
 export function getActiveGenerationRunId(
   database: Database.Database,
-  input: { userId: string; projectId: string; requestedRunId?: string },
+  input: {
+    userId: string;
+    projectId: string;
+    requestedRunId?: string;
+    allowLatestCompletedRun?: boolean;
+  },
 ): string {
   const context = getProjectRunContext(database, input.userId, input.projectId);
   if (!context?.activeGenerationRunId) {
@@ -341,13 +358,25 @@ export function getActiveGenerationRunId(
   }
   const run = database
     .prepare(
-      "SELECT status FROM generation_runs WHERE id = ? AND project_id = ?",
+      `SELECT gr.status,
+          gr.id = (
+            SELECT newest.id FROM generation_runs newest
+            WHERE newest.project_id = gr.project_id
+            ORDER BY newest.created_at DESC, newest.id DESC
+            LIMIT 1
+          ) AS is_latest
+       FROM generation_runs gr
+       WHERE gr.id = ? AND gr.project_id = ?`,
     )
     .get(context.activeGenerationRunId, input.projectId) as
-    { status: GenerationRunStatus } | undefined;
+    { is_latest: 0 | 1; status: GenerationRunStatus } | undefined;
   if (!run)
     throw new PipelineStateError("NOT_FOUND", "Generation run not found.");
-  if (run.status !== "ACTIVE") {
+  const completedRetryIsWritable =
+    input.allowLatestCompletedRun &&
+    run.status === "COMPLETED" &&
+    run.is_latest === 1;
+  if (run.status !== "ACTIVE" && !completedRetryIsWritable) {
     throw new PipelineStateError(
       "RUN_READ_ONLY",
       "This generation run is read-only. Start a new run to generate again.",

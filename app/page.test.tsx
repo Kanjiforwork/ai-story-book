@@ -75,25 +75,173 @@ function projectFixture(): ProjectDetailView {
   };
 }
 
+function characterFixture(
+  id: string,
+  name: string,
+  status: "FAILED" | "PENDING" | "RUNNING" = "PENDING",
+): ProjectDetailView["characters"][number] {
+  return {
+    id,
+    name,
+    position: id === "character-1" ? 0 : 1,
+    prompt: `An adult ${name.toLowerCase()} portrait prompt.`,
+    portrait: {
+      assetId: null,
+      assetUrl: null,
+      attempt: status === "PENDING" ? 0 : 1,
+      claimedAt: status === "PENDING" ? null : "2026-01-01T00:00:00.000Z",
+      errorCode: status === "FAILED" ? "GEMINI_FAILED" : null,
+      errorMessage: status === "FAILED" ? `${name} failed.` : null,
+      heartbeatAt: status === "PENDING" ? null : "2026-01-01T00:00:00.000Z",
+      isStale: false,
+      status,
+    },
+  };
+}
+
 describe("foundation app shell", () => {
   it("creates a project from an allowlisted sample book ID", async () => {
-    const fetchMock = vi.fn().mockResolvedValue({
-      json: async () => ({ project: { id: "sample-project" } }),
-      ok: true,
+    const sampleBookText = "STAVE I: MARLEY'S GHOST\n\nMarley was dead.";
+    const fetchMock = vi.fn().mockImplementation((input, init) => {
+      if (input === "/api/sample-books/a-christmas-carol") {
+        return Promise.resolve({
+          json: async () => ({ bookText: sampleBookText }),
+          ok: true,
+        });
+      }
+      if (input === "/api/projects" && init?.method === "POST") {
+        return Promise.resolve({
+          json: async () => ({ project: { id: "sample-project" } }),
+          ok: true,
+        });
+      }
+      throw new Error(`Unexpected fetch: ${String(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<NewProjectForm />);
 
     fireEvent.click(screen.getByRole("button", { name: /A Christmas Carol/i }));
-    expect(screen.getByLabelText("Project title")).toHaveValue(
-      "A Christmas Carol",
+    await waitFor(() =>
+      expect(screen.getByLabelText("Project title")).toHaveValue(
+        "A Christmas Carol",
+      ),
     );
+    await waitFor(() =>
+      expect(screen.getByLabelText("Book text")).toHaveValue(sampleBookText),
+    );
+    expect(screen.getByLabelText("Book text")).toBeDisabled();
     fireEvent.click(screen.getByRole("button", { name: "Create project" }));
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
-    const request = fetchMock.mock.calls[0][1] as { body: FormData };
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sample-books/a-christmas-carol",
+      { cache: "no-store" },
+    );
+    const request = fetchMock.mock.calls.find(
+      ([input]) => input === "/api/projects",
+    )?.[1] as { body: FormData };
     expect(request.body.get("sampleBookId")).toBe("a-christmas-carol");
     expect(request.body.get("bookText")).toBeNull();
+  });
+
+  it("unlocks the book text when the selected sample is pressed again", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        json: async () => ({ bookText: "Sample story text" }),
+        ok: true,
+      }),
+    );
+    render(<NewProjectForm />);
+
+    const sampleButton = screen.getByRole("button", {
+      name: /A Christmas Carol/i,
+    });
+    fireEvent.click(sampleButton);
+    await waitFor(() =>
+      expect(screen.getByLabelText("Book text")).toHaveValue(
+        "Sample story text",
+      ),
+    );
+
+    fireEvent.click(sampleButton);
+
+    expect(screen.getByLabelText("Book text")).toBeEnabled();
+    expect(screen.getByLabelText("Book text")).toHaveValue("");
+  });
+
+  it("keeps unrelated form controls visually stable while a sample loads", async () => {
+    let resolveSample!: (response: {
+      json: () => Promise<{ bookText: string }>;
+      ok: boolean;
+    }) => void;
+    const sampleResponse = new Promise<{
+      json: () => Promise<{ bookText: string }>;
+      ok: boolean;
+    }>((resolve) => {
+      resolveSample = resolve;
+    });
+    vi.stubGlobal("fetch", vi.fn().mockReturnValue(sampleResponse));
+    render(<NewProjectForm />);
+
+    const createButton = screen.getByRole("button", {
+      name: "Create project",
+    });
+    const fileInput = screen.getByLabelText("Or upload a .txt file");
+    fireEvent.click(screen.getByRole("button", { name: /A Christmas Carol/i }));
+
+    expect(createButton).toHaveTextContent("Create project");
+    expect(createButton).toBeDisabled();
+    expect(screen.getByLabelText("Or upload a .txt file")).toBe(fileInput);
+    expect(
+      screen.getByText(
+        "Paste plain text or choose a .txt file below. Maximum 200,000 characters.",
+      ),
+    ).toBeInTheDocument();
+
+    resolveSample({
+      json: async () => ({ bookText: "Christmas opening" }),
+      ok: true,
+    });
+
+    await waitFor(() =>
+      expect(screen.getByLabelText("Book text")).toHaveValue(
+        "Christmas opening",
+      ),
+    );
+    expect(screen.getByLabelText("Or upload a .txt file")).toBe(fileInput);
+    expect(createButton).toHaveTextContent("Create project");
+  });
+
+  it("scrolls to the beginning when switching sample books", async () => {
+    const sampleTexts = {
+      "/api/sample-books/a-christmas-carol": "Christmas opening",
+      "/api/sample-books/jekyll-and-hyde": "Jekyll opening",
+    } as const;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((input: keyof typeof sampleTexts) =>
+        Promise.resolve({
+          json: async () => ({ bookText: sampleTexts[input] }),
+          ok: true,
+        }),
+      ),
+    );
+    render(<NewProjectForm />);
+
+    const bookText = screen.getByLabelText("Book text");
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: /The Strange Case of Dr Jekyll and Mr Hyde/i,
+      }),
+    );
+    await waitFor(() => expect(bookText).toHaveValue("Jekyll opening"));
+    bookText.scrollTop = 160;
+
+    fireEvent.click(screen.getByRole("button", { name: /A Christmas Carol/i }));
+
+    await waitFor(() => expect(bookText).toHaveValue("Christmas opening"));
+    expect(bookText.scrollTop).toBe(0);
   });
 
   it("shows the studio title and the five-step contract", () => {
@@ -106,7 +254,7 @@ describe("foundation app shell", () => {
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
   });
 
-  it("shows every persisted attempt in the project history section", () => {
+  it("opens every persisted project attempt in a bounded dialog", () => {
     const project = projectFixture();
     project.attemptHistory = [
       {
@@ -139,10 +287,12 @@ describe("foundation app shell", () => {
 
     render(<ProjectDetail project={project} user={user} />);
 
-    const disclosure = screen.getByText("Attempt history").closest("details");
-    expect(disclosure).not.toHaveAttribute("open");
-    fireEvent.click(screen.getByText("Attempt history"));
-    expect(disclosure).toHaveAttribute("open");
+    const trigger = screen.getByRole("button", { name: /attempt history/i });
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Attempt history" });
+    expect(dialog).toBeInTheDocument();
     expect(screen.getByRole("list", { name: "Project attempts" })).toHaveClass(
       "max-h-72",
       "overflow-y-auto",
@@ -150,6 +300,28 @@ describe("foundation app shell", () => {
     expect(screen.getByText(/Attempt 1/)).toBeInTheDocument();
     expect(screen.getByText(/Attempt 2/)).toBeInTheDocument();
     expect(screen.getByText("Gemini was unavailable.")).toBeInTheDocument();
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(trigger).toHaveFocus();
+  });
+
+  it("keeps the initial workspace focused on the next action and book text", () => {
+    render(<ProjectDetail project={projectFixture()} user={user} />);
+
+    expect(
+      screen.getByRole("button", { name: "Generate style" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Art style" }),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText(/Style direction/i)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Ready to generate an art style."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Read full text" }),
+    ).toBeInTheDocument();
   });
 
   it("links global attempts back to their projects", () => {
@@ -263,6 +435,10 @@ describe("foundation app shell", () => {
     project.completedSteps = 2;
     project.status = "IN_PROGRESS";
     project.style = "Warm painted watercolour.";
+    project.characters = [
+      characterFixture("character-1", "Mole"),
+      characterFixture("character-2", "Rat"),
+    ];
     project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
     project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
 
@@ -271,8 +447,110 @@ describe("foundation app shell", () => {
     expect(
       screen.getByRole("button", { name: /generate portraits/i }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Ready to generate character portraits."),
+    ).not.toBeInTheDocument();
+    const resultGrid = screen.getByRole("region", {
+      name: "Completed project results",
+    });
+    expect(resultGrid).toBeInTheDocument();
+    expect(resultGrid.firstElementChild?.tagName).toBe("ASIDE");
+    expect(screen.getAllByText("Not generated yet")).toHaveLength(2);
+    expect(screen.queryByText("Generated results")).not.toBeInTheDocument();
     expect(screen.getAllByText("Chapters").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/pending/i).length).toBeGreaterThan(0);
+  });
+
+  it("keeps the contact-sheet layout while portraits are generating", () => {
+    const project = projectFixture();
+    project.completedSteps = 2;
+    project.status = "IN_PROGRESS";
+    project.style = "Warm painted watercolour.";
+    project.characters = [
+      characterFixture("character-1", "Mole", "RUNNING"),
+      characterFixture("character-2", "Rat", "RUNNING"),
+    ];
+    project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
+    project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
+    project.steps[2] = {
+      ...project.steps[2],
+      run: {
+        ...project.steps[2].run,
+        attempt: 1,
+        claimedAt: "2026-01-01T00:00:00.000Z",
+        heartbeatAt: "2026-01-01T00:00:00.000Z",
+      },
+      status: "RUNNING",
+    };
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(
+      screen.getByRole("region", { name: "Completed project results" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Generating portrait for Mole…"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Generating portrait for Rat…"),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Generating…" })).toBeDisabled();
+    expect(
+      screen.queryByText(/0 of 2 portraits saved/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByText("Generated results")).not.toBeInTheDocument();
+  });
+
+  it("retries a failed contact-sheet item with its saved prompt", async () => {
+    const project = projectFixture();
+    project.activeGenerationRunId = "generation-1";
+    project.completedSteps = 2;
+    project.status = "IN_PROGRESS";
+    project.style = "Warm painted watercolour.";
+    project.characters = [
+      characterFixture("character-1", "Mole", "FAILED"),
+      characterFixture("character-2", "Rat"),
+    ];
+    project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
+    project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
+    project.steps[2] = {
+      ...project.steps[2],
+      run: {
+        ...project.steps[2].run,
+        attempt: 1,
+        errorCode: "GEMINI_FAILED",
+        errorMessage: "Mole failed.",
+      },
+      status: "FAILED",
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({ run: { id: "retry-1", status: "RUNNING" } }),
+        ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({ project }),
+        ok: true,
+      });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    fireEvent.click(screen.getByText("Mole").closest("button")!);
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0]).toEqual([
+      "/api/projects/project-1/portraits/character-1/retry",
+      expect.objectContaining({
+        body: JSON.stringify({
+          generationRunId: "generation-1",
+          prompt: "An adult mole portrait prompt.",
+        }),
+        method: "POST",
+      }),
+    ]);
   });
 
   it("keeps generation history out of the project workspace", () => {
@@ -299,9 +577,13 @@ describe("foundation app shell", () => {
 
     render(<ProjectDetail project={project} user={user} />);
 
-    expect(screen.getByText("Saved results")).toBeInTheDocument();
+    expect(screen.getByText("Draft")).toBeInTheDocument();
     expect(
-      screen.getByText("Results are ready to revisit."),
+      screen.queryByRole("button", { name: /generate style/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Style direction/i)).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Read full text" }),
     ).toBeInTheDocument();
     expect(
       screen.queryByText(/previous run|generation history/i),
@@ -457,7 +739,7 @@ describe("foundation app shell", () => {
     );
   });
 
-  it("names running and stale recovery states in the step action panel", () => {
+  it("names running and stale recovery states in the header action", () => {
     const runningProject = projectFixture();
     runningProject.steps[0] = {
       ...runningProject.steps[0],
@@ -473,12 +755,11 @@ describe("foundation app shell", () => {
     const { unmount } = render(
       <ProjectDetail project={runningProject} user={user} />,
     );
+    expect(screen.getByRole("button", { name: "Generating…" })).toBeDisabled();
+    expect(screen.getByLabelText(/Style direction/i)).toBeDisabled();
     expect(
-      screen.getByText(/reading the book and defining an art style/i),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByText(/results save as they finish/i),
-    ).toBeInTheDocument();
+      screen.queryByText(/reading the book and defining an art style/i),
+    ).not.toBeInTheDocument();
     unmount();
 
     const staleProject = projectFixture();
@@ -723,20 +1004,104 @@ describe("foundation app shell", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the completed state compact while retaining source access", () => {
+  it("keeps the completed state compact and retries an edited image prompt", async () => {
     const project = projectFixture();
+    project.activeGenerationRunId = "generation-1";
     project.completedSteps = 5;
     project.status = "DONE";
     project.steps = project.steps.map((step) => ({
       ...step,
       status: "COMPLETED" as const,
     }));
+    project.style = "Warm watercolor with restrained ink outlines.";
+    project.characters = [
+      {
+        id: "character-1",
+        name: "Mole",
+        position: 0,
+        prompt: "An adult mole in a classic watercolor portrait.",
+        portrait: {
+          assetId: "portrait-1",
+          assetUrl: "/api/assets/portrait-1",
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: null,
+          errorMessage: null,
+          heartbeatAt: null,
+          isStale: false,
+          status: "COMPLETED",
+        },
+      },
+      {
+        id: "character-2",
+        name: "Rat",
+        position: 1,
+        prompt: "An adult rat in a classic watercolor portrait.",
+        portrait: {
+          assetId: "portrait-2",
+          assetUrl: "/api/assets/portrait-2",
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: null,
+          errorMessage: null,
+          heartbeatAt: null,
+          isStale: false,
+          status: "COMPLETED",
+        },
+      },
+    ];
+    project.chapters = [
+      {
+        id: "chapter-1",
+        name: "Chapter 1",
+        position: 0,
+        prompt: "A quiet riverbank in a classic watercolor landscape.",
+        illustration: {
+          assetId: "illustration-1",
+          assetUrl: "/api/assets/illustration-1",
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: null,
+          errorMessage: null,
+          heartbeatAt: null,
+          isStale: false,
+          status: "COMPLETED",
+        },
+      },
+    ];
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        json: async () => ({ run: { id: "retry-1", status: "RUNNING" } }),
+        ok: true,
+      })
+      .mockResolvedValueOnce({
+        json: async () => ({ project }),
+        ok: true,
+      });
+    vi.stubGlobal("fetch", fetchMock);
 
-    render(<ProjectDetail project={project} user={user} />);
+    const { rerender } = render(
+      <ProjectDetail project={project} user={user} />,
+    );
 
     expect(
-      screen.getByText("All five steps are complete."),
+      screen.getByRole("region", { name: "Completed project results" }),
     ).toBeInTheDocument();
+    expect(screen.getByAltText("Portrait of Mole")).toBeInTheDocument();
+    expect(screen.getByAltText("Portrait of Rat")).toBeInTheDocument();
+    expect(
+      screen.getByAltText("Illustration for Chapter 1"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByAltText("Illustration for Chapter 1").closest("button"),
+    ).toHaveClass("lg:col-start-4");
+    expect(
+      screen
+        .getByAltText("Illustration for Chapter 1")
+        .closest("span.relative"),
+    ).toHaveClass("aspect-square");
+    expect(screen.getAllByText("Read full prompt →")).toHaveLength(3);
     expect(screen.getByText("Done")).toHaveClass("bg-orange", "text-white");
     expect(
       screen
@@ -755,6 +1120,55 @@ describe("foundation app shell", () => {
     expect(screen.queryByText("Saved style")).not.toBeInTheDocument();
     expect(screen.queryByText("Book text preview")).not.toBeInTheDocument();
     expect(screen.queryByText("Full book text")).not.toBeInTheDocument();
+
+    const retryingProject = {
+      ...project,
+      characters: project.characters.map((character, index) =>
+        index === 0
+          ? {
+              ...character,
+              portrait: {
+                ...character.portrait,
+                status: "RUNNING" as const,
+              },
+            }
+          : character,
+      ),
+    };
+    rerender(
+      <ProjectDetail key="retrying" project={retryingProject} user={user} />,
+    );
+    expect(screen.queryByAltText("Portrait of Mole")).not.toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Generating portrait for Mole…",
+    );
+    expect(screen.getByAltText("Portrait of Rat")).toBeInTheDocument();
+    rerender(<ProjectDetail key="complete" project={project} user={user} />);
+
+    fireEvent.click(screen.getByRole("button", { name: /Portrait of Mole/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Edit prompt" }));
+    const prompt = screen.getByLabelText("Edit prompt");
+    fireEvent.change(prompt, {
+      target: {
+        value:
+          "An adult mole in a classic watercolor portrait with a red scarf.",
+      },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save & retry" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    expect(fetchMock.mock.calls[0]).toEqual([
+      "/api/projects/project-1/portraits/character-1/retry",
+      expect.objectContaining({
+        body: JSON.stringify({
+          generationRunId: "generation-1",
+          prompt:
+            "An adult mole in a classic watercolor portrait with a red scarf.",
+        }),
+        method: "POST",
+      }),
+    ]);
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens the full book text in a dialog and returns focus on Escape", () => {
@@ -852,7 +1266,7 @@ describe("foundation app shell", () => {
     unmount();
   });
 
-  it("keeps image progress named and bounded while portraits run", () => {
+  it("keeps image progress named in the gallery and header while portraits run", () => {
     const project = projectFixture();
     project.completedSteps = 2;
     project.status = "IN_PROGRESS";
@@ -906,11 +1320,16 @@ describe("foundation app shell", () => {
 
     render(<ProjectDetail project={project} user={user} />);
 
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+    const generatingButton = screen.getByRole("button", {
+      name: "Generating…",
+    });
+    expect(generatingButton).toBeDisabled();
+    expect(generatingButton.querySelector(".animate-spin")).not.toBeNull();
     expect(
-      screen.getAllByText("1 of 2 portraits saved").length,
-    ).toBeGreaterThan(0);
-    expect(screen.getByText(/Elapsed \d+[sm]/)).toBeInTheDocument();
+      screen.getByText("Generating portrait for Rat…"),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Elapsed \d+[sm]/)).not.toBeInTheDocument();
   });
 
   it("bounds chapter illustrations independently from their prompt", () => {

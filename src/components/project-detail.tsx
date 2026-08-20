@@ -4,17 +4,16 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 
 import {
-  IMPLEMENTED_PIPELINE_STEPS,
   PIPELINE_STEP_LABELS,
   isImplementedPipelineStep,
 } from "@/domain/pipeline";
 import type { ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
-import { ChapterList } from "@/components/chapter-list";
-import { CharacterGrid } from "@/components/character-grid";
+import {
+  CompletedProjectGallery,
+  type EditedPromptRetry,
+} from "@/components/completed-project-gallery";
 import { ProjectDetailDialog } from "@/components/project-detail-dialog";
-import { StepActionPanel } from "@/components/step-action-panel";
-import { ProjectAttemptHistory } from "@/components/step-attempt-history";
 import type { AuthenticatedUser } from "@/server/auth";
 
 function formatDate(value: string): string {
@@ -23,16 +22,6 @@ function formatDate(value: string): string {
     month: "long",
     year: "numeric",
   });
-}
-
-function sourcePreview(value: string): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length > 220 ? `${compact.slice(0, 220)}…` : compact;
-}
-
-function stylePreview(value: string): string {
-  const compact = value.replace(/\s+/g, " ").trim();
-  return compact.length > 180 ? `${compact.slice(0, 180)}…` : compact;
 }
 
 export function ProjectDetail({
@@ -48,9 +37,6 @@ export function ProjectDetail({
     null,
   );
   const [actionError, setActionError] = useState<string | null>(null);
-  const [retryingCharacterId, setRetryingCharacterId] = useState<string | null>(
-    null,
-  );
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   const [styleDialogOpen, setStyleDialogOpen] = useState(false);
   const latestRefreshId = useRef(0);
@@ -61,37 +47,16 @@ export function ProjectDetail({
   const currentStep = selectedRunReadOnly
     ? null
     : (implementedSteps.find((step) => step.status !== "COMPLETED") ?? null);
-  const portraitProgress = {
-    label: "portraits",
-    saved: project.characters.filter(
-      (character) => character.portrait.status === "COMPLETED",
-    ).length,
-    total: project.characters.length,
-  };
-  const illustrationProgress = {
-    label: "illustration",
-    saved: project.chapters.filter(
-      (chapter) => chapter.illustration.status === "COMPLETED",
-    ).length,
-    total: project.chapters.length,
-  };
-  const itemProgress =
-    currentStep?.key === "PORTRAITS" && portraitProgress.total > 0
-      ? portraitProgress
-      : currentStep?.key === "ILLUSTRATIONS" && illustrationProgress.total > 0
-        ? illustrationProgress
-        : undefined;
-  const implementedPipelineComplete =
-    implementedSteps.length === IMPLEMENTED_PIPELINE_STEPS.length &&
-    implementedSteps.every((step) => step.status === "COMPLETED");
+  const currentStepIsStale =
+    currentStep?.status === "RUNNING" && currentStep.run.isStale;
+  const currentStepIsRunning =
+    currentStep?.status === "RUNNING" && !currentStep.run.isStale;
   const shouldPoll = project.steps.some(
     (step) =>
       isImplementedPipelineStep(step.key) &&
       step.status === "RUNNING" &&
       !step.run.isStale,
   );
-  const portraitStep = project.steps.find((step) => step.key === "PORTRAITS");
-  const styleNeedsDialog = Boolean(project.style && project.style.length > 180);
 
   async function refreshProject() {
     const refreshId = latestRefreshId.current + 1;
@@ -186,67 +151,78 @@ export function ProjectDetail({
     }
   }
 
-  async function retryPortrait(characterId: string) {
-    setRetryingCharacterId(characterId);
-    setPendingAction("run");
-    setActionError(null);
-    try {
-      const response = await fetch(
-        `/api/projects/${project.id}/portraits/${characterId}/retry`,
-        {
-          body: JSON.stringify({
-            generationRunId: project.activeGenerationRunId,
-          }),
-          headers: { "content-type": "application/json" },
-          method: "POST",
-        },
-      );
-      const payload = (await response.json()) as { message?: string };
-      if (!response.ok) {
-        setActionError(
-          payload.message ?? "This portrait could not be retried.",
-        );
-        return;
-      }
-      await refreshProject();
-    } catch {
-      setActionError("The server could not be reached. Try again.");
-    } finally {
-      setRetryingCharacterId(null);
-      setPendingAction(null);
+  async function retryEditedPrompt(input: EditedPromptRetry) {
+    if (!project.activeGenerationRunId) {
+      throw new Error("This saved run cannot be edited.");
     }
+
+    const resource = input.kind === "portrait" ? "portraits" : "illustrations";
+    const response = await fetch(
+      `/api/projects/${project.id}/${resource}/${input.id}/retry`,
+      {
+        body: JSON.stringify({
+          generationRunId: project.activeGenerationRunId,
+          prompt: input.prompt,
+        }),
+        headers: { "content-type": "application/json" },
+        method: "POST",
+      },
+    );
+    const payload = (await response.json()) as { message?: string };
+    if (!response.ok) {
+      throw new Error(payload.message ?? "This image could not be retried.");
+    }
+    await refreshProject();
   }
 
   return (
     <AppShell user={user}>
-      <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
+      <main className="mx-auto max-w-[90rem] px-5 py-6 sm:px-8 sm:py-8">
         <Link
-          className="inline-flex min-h-11 items-center rounded-lg px-2 text-sm font-semibold text-ink-body hover:bg-paper hover:text-ink"
+          className="inline-flex min-h-10 items-center pr-2 text-sm font-medium text-ink-body transition hover:text-orange"
           href="/projects"
         >
           ← Back to projects
         </Link>
 
-        <div className="mt-4 border-b border-line/60 pb-5">
-          <p className="text-xs font-bold uppercase tracking-[0.18em] text-orange">
-            Project workspace
-          </p>
-          <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] sm:text-4xl">
-            {project.title}
-          </h1>
-          <p className="mt-2 text-sm text-ink-muted">
-            Created {formatDate(project.createdAt)} · {project.completedSteps}{" "}
-            of {project.totalSteps} steps complete
-          </p>
-        </div>
-
-        <section aria-labelledby="stepper-heading" className="mt-5">
-          <div className="mb-3 flex items-center justify-between gap-4">
-            <h2 className="text-lg font-semibold" id="stepper-heading">
-              Pipeline progress
-            </h2>
+        <div className="mt-3 flex items-start justify-between gap-5">
+          <div className="min-w-0">
+            <h1 className="font-editorial break-words text-[clamp(2.5rem,4.2vw,4rem)] leading-[0.98] tracking-[-0.045em]">
+              {project.title}
+            </h1>
+            <p className="mt-3 text-sm text-ink-muted">
+              Created {formatDate(project.createdAt)} · {project.completedSteps}{" "}
+              of {project.totalSteps} complete
+            </p>
+          </div>
+          {!selectedRunReadOnly && currentStep ? (
+            <button
+              className="mt-1 inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-orange px-5 text-xs font-bold text-white shadow-[0_2px_6px_rgba(255,107,0,0.18)] transition hover:bg-orange-hover focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/20 disabled:cursor-wait disabled:opacity-70"
+              disabled={currentStepIsRunning || pendingAction !== null}
+              onClick={currentStepIsStale ? recoverCurrentStep : runCurrentStep}
+              type="button"
+            >
+              {currentStepIsRunning || pendingAction !== null ? (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none"
+                  />
+                  <span aria-live="polite">
+                    {currentStepIsRunning ? "Generating…" : "Starting…"}
+                  </span>
+                </>
+              ) : currentStepIsStale ? (
+                "Recover run"
+              ) : currentStep.status === "FAILED" ? (
+                `Retry ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
+              ) : (
+                `Generate ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
+              )}
+            </button>
+          ) : (
             <span
-              className={`rounded-full px-3 py-1 text-xs font-bold ${project.status === "DONE" ? "bg-orange text-white" : "bg-line/40 text-ink-body"}`}
+              className={`mt-1 shrink-0 rounded-full px-5 py-2 text-xs font-bold ${project.status === "DONE" ? "bg-orange text-white" : "bg-paper text-ink-body"}`}
             >
               {project.status === "DRAFT"
                 ? "Draft"
@@ -254,19 +230,22 @@ export function ProjectDetail({
                   ? "Done"
                   : "In progress"}
             </span>
-          </div>
-          <ol className="grid grid-cols-5 gap-1.5 sm:gap-2">
-            {project.steps.map((step) => (
+          )}
+        </div>
+
+        <section aria-label="Pipeline progress" className="mt-8">
+          <ol className="flex items-center">
+            {project.steps.map((step, index) => (
               <li
                 aria-current={
                   currentStep?.key === step.key ? "step" : undefined
                 }
-                className={`min-w-0 rounded-xl border p-2.5 sm:p-3 ${currentStep?.key === step.key ? "border-orange/50 bg-orange/5" : "border-line/60 bg-surface"}`}
+                className="flex min-w-0 flex-1 items-center last:flex-none"
                 key={step.key}
               >
-                <div className="flex items-center gap-3">
+                <div className="flex min-w-0 items-center gap-2">
                   <span
-                    className={`flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold sm:size-8 sm:text-xs ${
+                    className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
                       step.status === "COMPLETED"
                         ? "bg-orange text-white"
                         : step.status === "RUNNING"
@@ -278,141 +257,63 @@ export function ProjectDetail({
                   >
                     {step.status === "COMPLETED" ? "✓" : step.position + 1}
                   </span>
-                  <span className="hidden min-w-0 truncate text-xs font-semibold sm:inline">
+                  <span
+                    className={`font-editorial hidden min-w-0 truncate text-sm md:inline ${currentStep?.key === step.key ? "text-ink" : "text-ink-body"}`}
+                  >
                     {PIPELINE_STEP_LABELS[step.key]}
                   </span>
+                  <span className="sr-only">
+                    {step.status === "COMPLETED"
+                      ? ", complete"
+                      : step.status === "RUNNING" && step.run.isStale
+                        ? ", interrupted"
+                        : step.status === "RUNNING"
+                          ? ", running"
+                          : step.status === "FAILED"
+                            ? ", needs attention"
+                            : ", pending"}
+                  </span>
                 </div>
-                <p className="mt-2 text-[10px] text-ink-muted sm:text-xs">
-                  {step.status === "COMPLETED"
-                    ? "Complete"
-                    : step.status === "RUNNING" && step.run.isStale
-                      ? "Interrupted"
-                      : step.status === "RUNNING"
-                        ? "Running"
-                        : step.status === "FAILED"
-                          ? "Needs attention"
-                          : "Pending"}
-                </p>
+                {index < project.steps.length - 1 ? (
+                  <span
+                    aria-hidden="true"
+                    className={`mx-3 h-px min-w-2 flex-1 sm:mx-4 ${step.status === "COMPLETED" ? "bg-orange" : "bg-line"}`}
+                  />
+                ) : null}
               </li>
             ))}
           </ol>
         </section>
 
-        <ProjectAttemptHistory attempts={project.attemptHistory} />
-
-        <div className="mt-5 space-y-4">
-          {selectedRunReadOnly ? (
-            <section className="rounded-2xl border border-line/60 bg-paper px-5 py-4 sm:px-6">
-              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-orange text-sm font-bold text-white">
-                  ✓
-                </span>
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-                    Saved results
-                  </p>
-                  <h2 className="mt-1 text-xl font-semibold">
-                    Results are ready to revisit.
-                  </h2>
-                </div>
-                <p className="text-sm leading-6 text-ink-body sm:ml-auto">
-                  Saved output is kept here so you can review it safely.
-                </p>
-              </div>
-            </section>
-          ) : (
-            <StepActionPanel
-              actionError={actionError}
-              currentStep={currentStep}
-              onRecover={recoverCurrentStep}
-              onRun={runCurrentStep}
-              onStyleDraftChange={setStyleDraft}
-              pending={pendingAction !== null}
-              styleDraft={styleDraft}
-              implementedPipelineComplete={implementedPipelineComplete}
-              itemProgress={itemProgress}
-            />
-          )}
-          <div className="grid items-stretch gap-4 lg:grid-cols-2">
-            <section
-              aria-labelledby="style-context-heading"
-              className="flex min-h-56 flex-col rounded-2xl bg-surface p-5 sm:p-6"
-            >
-              <h2 className="text-xl font-semibold" id="style-context-heading">
-                Art style
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-ink-body">
-                {project.style
-                  ? stylePreview(project.style)
-                  : "Generate Style first. Characters will use the saved style as context."}
-              </p>
-              {styleNeedsDialog ? (
-                <button
-                  className="mt-auto inline-flex min-h-11 self-start items-center rounded-xl px-2 py-2 text-sm font-semibold text-orange-deep underline decoration-line underline-offset-4 transition hover:bg-orange/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15"
-                  onClick={() => setStyleDialogOpen(true)}
-                  type="button"
-                >
-                  View full style
-                </button>
-              ) : null}
-            </section>
-
-            <section
-              aria-labelledby="source-context-heading"
-              className="flex min-h-56 flex-col rounded-2xl bg-surface p-5 sm:p-6"
-            >
-              <div className="flex items-start justify-between gap-3">
-                <h2
-                  className="text-xl font-semibold"
-                  id="source-context-heading"
-                >
-                  Book text
-                </h2>
-                <span className="shrink-0 text-right text-xs tabular-nums text-ink-muted">
-                  {project.bookText.length.toLocaleString()} chars
-                </span>
-              </div>
-              <p className="mt-3 text-sm italic leading-6 text-ink-body">
-                {sourcePreview(project.bookText)}
-              </p>
-              <button
-                className="mt-auto inline-flex min-h-11 self-start items-center rounded-xl px-2 py-2 text-sm font-semibold text-orange-deep underline decoration-line underline-offset-4 transition hover:bg-orange/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15"
-                onClick={() => setSourceDialogOpen(true)}
-                type="button"
-              >
-                Read full text
-              </button>
-            </section>
-          </div>
-        </div>
-
-        {project.characters.length > 0 || project.chapters.length > 0 ? (
-          <div className="mt-8 flex items-center gap-4">
-            <div className="h-px flex-1 bg-line/60" />
-            <p className="text-xs font-bold uppercase tracking-[0.18em] text-ink-muted">
-              Generated results
-            </p>
-            <div className="h-px flex-1 bg-line/60" />
-          </div>
+        {actionError ||
+        currentStep?.status === "FAILED" ||
+        currentStepIsStale ? (
+          <p className="mt-4 text-sm leading-6 text-orange-deep" role="alert">
+            {actionError ??
+              (currentStepIsStale
+                ? "Generation paused. Your saved work is safe."
+                : (currentStep?.run.errorMessage ??
+                  "This step needs another attempt."))}
+          </p>
         ) : null}
 
-        <CharacterGrid
-          characters={project.characters}
-          onRetry={
-            !selectedRunReadOnly &&
-            portraitStep?.status === "FAILED" &&
-            !portraitStep.run.isStale
-              ? retryPortrait
-              : undefined
-          }
-          readOnly={selectedRunReadOnly}
-          retryDisabled={pendingAction !== null}
-          retryingCharacterId={retryingCharacterId}
-        />
-
-        <ChapterList
+        <CompletedProjectGallery
+          attempts={project.attemptHistory}
+          bookText={project.bookText}
           chapters={project.chapters}
+          characters={project.characters}
+          createdAt={project.createdAt}
+          onReadFullText={() => setSourceDialogOpen(true)}
+          onRetryPrompt={retryEditedPrompt}
+          onStyleDraftChange={setStyleDraft}
+          onViewFullStyle={() => setStyleDialogOpen(true)}
           readOnly={selectedRunReadOnly}
+          showStyleDirection={currentStep?.key === "STYLE"}
+          style={project.style}
+          styleDirectionDisabled={
+            currentStepIsRunning || pendingAction !== null
+          }
+          styleDraft={styleDraft}
         />
 
         <ProjectDetailDialog

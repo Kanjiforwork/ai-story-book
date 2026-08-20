@@ -518,6 +518,8 @@ export function getProjectDetail(
     .prepare("SELECT status, style_text FROM generation_runs WHERE id = ?")
     .get(row.active_generation_run_id) as
     { status: string; style_text: string | null } | undefined;
+  const generationRuns = listGenerationRuns(database, userId, projectId) ?? [];
+  const selectedGenerationRun = generationRuns.find((run) => run.isSelected);
 
   return {
     ...summary,
@@ -531,8 +533,8 @@ export function getProjectDetail(
       generationRunId: row.active_generation_run_id,
     })),
     activeGenerationRunId: row.active_generation_run_id,
-    selectedRunReadOnly: activeRun?.status !== "ACTIVE",
-    generationRuns: listGenerationRuns(database, userId, projectId) ?? [],
+    selectedRunReadOnly: !selectedGenerationRun?.isWritable,
+    generationRuns,
   };
 }
 
