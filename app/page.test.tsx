@@ -13,7 +13,9 @@ import { IdentityForm } from "@/components/identity-form";
 import { ChapterList } from "@/components/chapter-list";
 import { GenerationStatusFrame } from "@/components/generation-status-frame";
 import { ProjectDetail } from "@/components/project-detail";
+import { NewProjectForm } from "@/components/new-project-form";
 import { CharacterGrid } from "@/components/character-grid";
+import { AttemptHistoryPage } from "@/components/attempt-history-page";
 import type { GenerationRunView, ProjectDetailView } from "@/domain/project";
 import type { AuthenticatedUser } from "@/server/auth";
 
@@ -39,6 +41,7 @@ const user: AuthenticatedUser = {
 
 function projectFixture(): ProjectDetailView {
   return {
+    attemptHistory: [],
     bookText: "A river ran beside the burrow.",
     characters: [],
     chapters: [],
@@ -53,6 +56,7 @@ function projectFixture(): ProjectDetailView {
       "CHAPTERS",
       "ILLUSTRATIONS",
     ].map((key, position) => ({
+      attempts: [],
       key: key as ProjectDetailView["steps"][number]["key"],
       position,
       run: {
@@ -72,6 +76,26 @@ function projectFixture(): ProjectDetailView {
 }
 
 describe("foundation app shell", () => {
+  it("creates a project from an allowlisted sample book ID", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      json: async () => ({ project: { id: "sample-project" } }),
+      ok: true,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(<NewProjectForm />);
+
+    fireEvent.click(screen.getByRole("button", { name: /A Christmas Carol/i }));
+    expect(screen.getByLabelText("Project title")).toHaveValue(
+      "A Christmas Carol",
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Create project" }));
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const request = fetchMock.mock.calls[0][1] as { body: FormData };
+    expect(request.body.get("sampleBookId")).toBe("a-christmas-carol");
+    expect(request.body.get("bookText")).toBeNull();
+  });
+
   it("shows the studio title and the five-step contract", () => {
     render(<IdentityForm />);
 
@@ -80,6 +104,83 @@ describe("foundation app shell", () => {
     ).toBeInTheDocument();
     expect(screen.getByLabelText("Full name")).toBeInTheDocument();
     expect(screen.getByLabelText("Email")).toBeInTheDocument();
+  });
+
+  it("shows every persisted attempt in the project history section", () => {
+    const project = projectFixture();
+    project.attemptHistory = [
+      {
+        attempt: 1,
+        claimedAt: "2026-01-01T10:00:00.000Z",
+        errorCode: "GEMINI_FAILED",
+        errorMessage: "Gemini was unavailable.",
+        finishedAt: "2026-01-01T10:01:00.000Z",
+        generationRunId: "generation-1",
+        id: "attempt-1",
+        projectId: project.id,
+        projectTitle: project.title,
+        status: "FAILED",
+        step: "STYLE",
+      },
+      {
+        attempt: 2,
+        claimedAt: "2026-01-01T10:05:00.000Z",
+        errorCode: null,
+        errorMessage: null,
+        finishedAt: "2026-01-01T10:06:00.000Z",
+        generationRunId: "generation-1",
+        id: "attempt-2",
+        projectId: project.id,
+        projectTitle: project.title,
+        status: "COMPLETED",
+        step: "STYLE",
+      },
+    ];
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    const disclosure = screen.getByText("Attempt history").closest("details");
+    expect(disclosure).not.toHaveAttribute("open");
+    fireEvent.click(screen.getByText("Attempt history"));
+    expect(disclosure).toHaveAttribute("open");
+    expect(screen.getByRole("list", { name: "Project attempts" })).toHaveClass(
+      "max-h-72",
+      "overflow-y-auto",
+    );
+    expect(screen.getByText(/Attempt 1/)).toBeInTheDocument();
+    expect(screen.getByText(/Attempt 2/)).toBeInTheDocument();
+    expect(screen.getByText("Gemini was unavailable.")).toBeInTheDocument();
+  });
+
+  it("links global attempts back to their projects", () => {
+    render(
+      <AttemptHistoryPage
+        attempts={[
+          {
+            attempt: 1,
+            claimedAt: "2026-01-01T10:00:00.000Z",
+            errorCode: null,
+            errorMessage: null,
+            finishedAt: "2026-01-01T10:01:00.000Z",
+            generationRunId: "generation-1",
+            id: "attempt-1",
+            projectId: "project-1",
+            projectTitle: "River Burrow",
+            status: "COMPLETED",
+            step: "STYLE",
+          },
+        ]}
+        user={user}
+      />,
+    );
+
+    expect(screen.getByRole("link", { name: "Attempts" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    const attemptLink = screen.getByRole("link", { name: /River Burrow/ });
+    expect(attemptLink).toHaveAttribute("href", "/projects/project-1");
+    expect(attemptLink).toHaveTextContent(/Style · Attempt 1/);
   });
 
   it("keeps a retryable error when sign out fails", async () => {

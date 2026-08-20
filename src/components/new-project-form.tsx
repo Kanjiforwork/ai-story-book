@@ -4,11 +4,15 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 
+import { SAMPLE_BOOKS, type SampleBookId } from "@/domain/sample-books";
+
 export function NewProjectForm() {
   const router = useRouter();
   const [title, setTitle] = useState("");
   const [bookText, setBookText] = useState("");
   const [file, setFile] = useState<File | null>(null);
+  const [fileInputKey, setFileInputKey] = useState(0);
+  const [sampleBookId, setSampleBookId] = useState<SampleBookId | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
 
@@ -20,7 +24,8 @@ export function NewProjectForm() {
     try {
       const formData = new FormData();
       formData.set("title", title);
-      if (file) formData.set("file", file);
+      if (sampleBookId) formData.set("sampleBookId", sampleBookId);
+      else if (file) formData.set("file", file);
       else formData.set("bookText", bookText);
 
       const response = await fetch("/api/projects", {
@@ -55,7 +60,37 @@ export function NewProjectForm() {
       setError("Choose a plain .txt file.");
       return;
     }
+    setBookText("");
     setFile(nextFile);
+    clearSampleBook();
+  }
+
+  function handleBookTextChange(value: string) {
+    setBookText(value);
+    if (!value) return;
+    setFile(null);
+    setFileInputKey((key) => key + 1);
+    clearSampleBook();
+  }
+
+  function clearSampleBook() {
+    if (!sampleBookId) return;
+    const sample = SAMPLE_BOOKS.find((book) => book.id === sampleBookId);
+    setTitle((currentTitle) =>
+      currentTitle === sample?.title ? "" : currentTitle,
+    );
+    setSampleBookId(null);
+  }
+
+  function selectSampleBook(sampleId: SampleBookId) {
+    const sample = SAMPLE_BOOKS.find((book) => book.id === sampleId);
+    if (!sample) return;
+    setBookText("");
+    setError(null);
+    setFile(null);
+    setFileInputKey((key) => key + 1);
+    setSampleBookId(sampleId);
+    setTitle(sample.title);
   }
 
   return (
@@ -77,6 +112,36 @@ export function NewProjectForm() {
         />
       </div>
 
+      <fieldset>
+        <legend className="mb-2 block text-sm font-semibold">
+          Start with a sample book
+        </legend>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {SAMPLE_BOOKS.map((book) => {
+            const selected = sampleBookId === book.id;
+            return (
+              <button
+                aria-pressed={selected}
+                className={`min-h-24 rounded-xl border px-4 py-3 text-left transition focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15 ${selected ? "border-orange bg-orange/5" : "border-line bg-paper hover:border-orange/50"}`}
+                key={book.id}
+                onClick={() => selectSampleBook(book.id)}
+                type="button"
+              >
+                <span className="block text-sm font-semibold text-ink">
+                  {book.title}
+                </span>
+                <span className="mt-1 block text-xs leading-5 text-ink-muted">
+                  {book.author} · Public domain
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-2 text-xs leading-5 text-ink-muted">
+          Or paste your own text or upload a file below.
+        </p>
+      </fieldset>
+
       <div>
         <label className="mb-2 block text-sm font-semibold" htmlFor="book-text">
           Book text
@@ -84,7 +149,7 @@ export function NewProjectForm() {
         <textarea
           className="min-h-52 w-full resize-y rounded-xl border border-line bg-surface px-4 py-3 text-base leading-7 text-ink outline-none transition placeholder:text-ink-muted focus:border-orange focus:ring-4 focus:ring-orange/15"
           id="book-text"
-          onChange={(event) => setBookText(event.target.value)}
+          onChange={(event) => handleBookTextChange(event.target.value)}
           placeholder="Paste the book text here…"
           value={bookText}
         />
@@ -102,6 +167,7 @@ export function NewProjectForm() {
           accept=".txt,text/plain"
           className="mt-3 block w-full text-sm text-ink-body file:mr-3 file:min-h-10 file:rounded-lg file:border-0 file:bg-ink file:px-3 file:font-semibold file:text-white hover:file:bg-ink-body"
           id="book-file"
+          key={fileInputKey}
           onChange={(event) => handleFileChange(event.target.files?.[0])}
           type="file"
         />

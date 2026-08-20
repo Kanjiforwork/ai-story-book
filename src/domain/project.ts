@@ -57,11 +57,29 @@ export type GenerationRunView = {
 };
 
 export type ProjectStepView = {
+  attempts: ProjectStepAttemptView[];
   key: PipelineStep;
   position: number;
   status: ProjectStepStatus;
   generationRunId?: string;
   run: ProjectStepRunView;
+};
+
+export type ProjectStepAttemptView = {
+  attempt: number;
+  claimedAt: string;
+  errorCode: string | null;
+  errorMessage: string | null;
+  finishedAt: string | null;
+  status: "RUNNING" | "FAILED" | "COMPLETED";
+};
+
+export type ProjectAttemptHistoryItem = ProjectStepAttemptView & {
+  id: string;
+  generationRunId: string;
+  projectId: string;
+  projectTitle: string;
+  step: PipelineStep;
 };
 
 export type ProjectStepRunView = {
@@ -124,6 +142,7 @@ export type ProjectSummary = {
 };
 
 export type ProjectDetailView = ProjectSummary & {
+  attemptHistory: ProjectAttemptHistoryItem[];
   bookText: string;
   characters: CharacterView[];
   chapters: ChapterView[];

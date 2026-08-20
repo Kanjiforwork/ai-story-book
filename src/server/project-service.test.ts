@@ -9,6 +9,7 @@ import { PIPELINE_STEPS } from "@/domain/pipeline";
 import {
   createProject,
   getProjectDetail,
+  listAttemptHistory,
   listProjects,
 } from "@/server/project-service";
 import { openDatabase } from "@/server/storage";
@@ -63,6 +64,66 @@ describe("project persistence", () => {
         status: "IN_PROGRESS",
       }),
     );
+
+    const firstAttempt = "2026-01-01T10:00:00.000Z";
+    const secondAttempt = "2026-01-01T10:05:00.000Z";
+    database
+      .prepare(
+        `INSERT INTO pipeline_runs
+          (id, project_id, generation_run_id, step_key, attempt, status,
+           claimed_at, heartbeat_at, finished_at, error_code, error_message)
+         VALUES (?, ?, ?, 'STYLE', ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        "style-attempt-1",
+        project.id,
+        project.activeGenerationRunId,
+        1,
+        "FAILED",
+        firstAttempt,
+        firstAttempt,
+        firstAttempt,
+        "GEMINI_FAILED",
+        "Gemini was unavailable.",
+      );
+    database
+      .prepare(
+        `INSERT INTO pipeline_runs
+          (id, project_id, generation_run_id, step_key, attempt, status,
+           claimed_at, heartbeat_at, finished_at, error_code, error_message)
+         VALUES (?, ?, ?, 'STYLE', 2, 'COMPLETED', ?, ?, ?, NULL, NULL)`,
+      )
+      .run(
+        "style-attempt-2",
+        project.id,
+        project.activeGenerationRunId,
+        secondAttempt,
+        secondAttempt,
+        secondAttempt,
+      );
+    expect(
+      getProjectDetail(database, user.id, project.id, dataDir)?.steps[0]
+        .attempts,
+    ).toEqual([
+      expect.objectContaining({ attempt: 1, status: "FAILED" }),
+      expect.objectContaining({ attempt: 2, status: "COMPLETED" }),
+    ]);
+    expect(listAttemptHistory(database, user.id, project.id)).toEqual([
+      expect.objectContaining({
+        attempt: 2,
+        projectId: project.id,
+        projectTitle: "River Burrow",
+        status: "COMPLETED",
+        step: "STYLE",
+      }),
+      expect.objectContaining({
+        attempt: 1,
+        errorMessage: "Gemini was unavailable.",
+        projectId: project.id,
+        status: "FAILED",
+      }),
+    ]);
+    expect(listAttemptHistory(database, "another-user")).toEqual([]);
 
     database.close();
   });

@@ -14,6 +14,7 @@ import { ChapterList } from "@/components/chapter-list";
 import { CharacterGrid } from "@/components/character-grid";
 import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 import { StepActionPanel } from "@/components/step-action-panel";
+import { ProjectAttemptHistory } from "@/components/step-attempt-history";
 import type { AuthenticatedUser } from "@/server/auth";
 
 function formatDate(value: string): string {
@@ -296,6 +297,8 @@ export function ProjectDetail({
             ))}
           </ol>
         </section>
+
+        <ProjectAttemptHistory attempts={project.attemptHistory} />
 
         <div className="mt-5 space-y-4">
           {selectedRunReadOnly ? (

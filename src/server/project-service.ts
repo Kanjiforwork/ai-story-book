@@ -8,7 +8,9 @@ import type {
   ChapterView,
   IllustrationItemStatus,
   PortraitItemStatus,
+  ProjectAttemptHistoryItem,
   ProjectDetailView,
+  ProjectStepAttemptView,
   ProjectStatus,
   ProjectStepRunView,
   ProjectStepStatus,
@@ -48,6 +50,30 @@ type StepRow = {
   step_key: (typeof PIPELINE_STEPS)[number];
   position: number;
   status: ProjectStepStatus;
+};
+
+type StepAttemptRow = {
+  attempt: number;
+  claimed_at: string;
+  error_code: string | null;
+  error_message: string | null;
+  finished_at: string | null;
+  status: ProjectStepAttemptView["status"];
+  step_key: (typeof PIPELINE_STEPS)[number];
+};
+
+type ProjectAttemptHistoryRow = {
+  id: string;
+  project_id: string;
+  project_title: string;
+  generation_run_id: string;
+  step_key: (typeof PIPELINE_STEPS)[number];
+  attempt: number;
+  status: ProjectStepAttemptView["status"];
+  claimed_at: string;
+  finished_at: string | null;
+  error_code: string | null;
+  error_message: string | null;
 };
 
 type CharacterRow = {
@@ -99,10 +125,21 @@ function deriveProjectStatus(
 
 function toStepViews(
   rows: readonly StepRow[],
+  attemptRows: readonly StepAttemptRow[],
   staleRunMs: number,
   now = Date.now(),
 ): ProjectStepView[] {
   return rows.map((row) => ({
+    attempts: attemptRows
+      .filter((attempt) => attempt.step_key === row.step_key)
+      .map((attempt) => ({
+        attempt: attempt.attempt,
+        claimedAt: attempt.claimed_at,
+        errorCode: attempt.error_code,
+        errorMessage: attempt.error_message,
+        finishedAt: attempt.finished_at,
+        status: attempt.status,
+      })),
     key: row.step_key,
     position: row.position,
     status: row.status,
@@ -326,6 +363,53 @@ export function listProjects(
   return selectProjectRows(database, userId).map(toSummary);
 }
 
+export function listAttemptHistory(
+  database: Database.Database,
+  userId: string,
+  projectId?: string,
+): ProjectAttemptHistoryItem[] {
+  const projectFilter = projectId ? "AND p.id = @projectId" : "";
+  const rows = database
+    .prepare(
+      `
+        SELECT
+          pr.id,
+          pr.project_id,
+          p.title AS project_title,
+          pr.generation_run_id,
+          pr.step_key,
+          pr.attempt,
+          pr.status,
+          pr.claimed_at,
+          pr.finished_at,
+          pr.error_code,
+          pr.error_message
+        FROM pipeline_runs pr
+        INNER JOIN projects p ON p.id = pr.project_id
+        WHERE p.user_id = @userId
+          ${projectFilter}
+        ORDER BY pr.claimed_at DESC, pr.id DESC
+      `,
+    )
+    .all(
+      projectId ? { projectId, userId } : { userId },
+    ) as ProjectAttemptHistoryRow[];
+
+  return rows.map((attempt) => ({
+    attempt: attempt.attempt,
+    claimedAt: attempt.claimed_at,
+    errorCode: attempt.error_code,
+    errorMessage: attempt.error_message,
+    finishedAt: attempt.finished_at,
+    generationRunId: attempt.generation_run_id,
+    id: attempt.id,
+    projectId: attempt.project_id,
+    projectTitle: attempt.project_title,
+    status: attempt.status,
+    step: attempt.step_key,
+  }));
+}
+
 export function getProjectDetail(
   database: Database.Database,
   userId: string,
@@ -356,6 +440,17 @@ export function getProjectDetail(
       `,
     )
     .all(row.active_generation_run_id) as StepRow[];
+  const stepAttemptRows = database
+    .prepare(
+      `
+        SELECT step_key, attempt, status, claimed_at, finished_at,
+          error_code, error_message
+        FROM pipeline_runs
+        WHERE generation_run_id = ?
+        ORDER BY step_key ASC, attempt ASC
+      `,
+    )
+    .all(row.active_generation_run_id) as StepAttemptRow[];
   const characterRows = database
     .prepare(
       `
@@ -426,11 +521,12 @@ export function getProjectDetail(
 
   return {
     ...summary,
+    attemptHistory: listAttemptHistory(database, userId, projectId),
     bookText: readBookText(dataDir, row.book_text_key),
     characters,
     chapters,
     style: activeRun?.style_text ?? null,
-    steps: toStepViews(stepRows, staleRunMs).map((step) => ({
+    steps: toStepViews(stepRows, stepAttemptRows, staleRunMs).map((step) => ({
       ...step,
       generationRunId: row.active_generation_run_id,
     })),

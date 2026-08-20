@@ -1,5 +1,6 @@
 import { ValidationError } from "@/domain/validation";
 import { decodeTextUpload } from "@/server/book-text";
+import { loadSampleBook } from "@/server/sample-books";
 
 export type ProjectInput = {
   title: unknown;
@@ -37,6 +38,20 @@ export async function parseProjectInput(
       throw new ValidationError("Send a valid multipart project payload.");
     }
     const file = formData.get("file");
+    const sampleBookId = formData.get("sampleBookId");
+    if (typeof sampleBookId === "string" && sampleBookId.trim()) {
+      if (isUploadedFile(file)) {
+        throw new ValidationError("Choose one book source.");
+      }
+      const pastedText = formData.get("bookText");
+      if (typeof pastedText === "string" && pastedText.trim()) {
+        throw new ValidationError("Choose one book source.");
+      }
+      return {
+        title: formData.get("title"),
+        bookText: loadSampleBook(sampleBookId).bookText,
+      };
+    }
     if (isUploadedFile(file)) {
       return {
         title: formData.get("title"),
