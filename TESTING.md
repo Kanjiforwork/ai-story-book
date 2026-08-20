@@ -4,7 +4,7 @@
 
 Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
 
-Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, run-history selection without generation, read-only previous-run rendering, running and stale copy, retry affordances, private asset URLs, item progress, compact completion, bounded media, source and prompt dialogs, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, and visible focus treatment.
+Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, hidden generation-history controls, neutral saved-output rendering, code-native missing-media frames, one-line prompt previews with full source/style and prompt dialogs, running and stale copy, retry affordances, private asset URLs, item progress, compact completion, bounded media, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, visible focus treatment, and the absence of history copy.
 
 ## Actual generation-run verification
 
@@ -14,7 +14,7 @@ Commands were run sequentially from `/Users/bao/GitHub/ai-story-book`.
 
 ```text
 Test Files  14 passed (14)
-Tests       64 passed (64)
+Tests       65 passed (65)
 ```
 
 ### `npm run check`
@@ -77,8 +77,8 @@ Covered by automated tests unless marked otherwise:
 - Project and asset ownership are checked server-side.
 - Traversal-like asset keys and missing backing files are rejected.
 - Refresh/read-back and server restart preserve book text, style, characters, prompts, and asset records.
-- Frontend running, failed, stale, partial-success, completed, private-asset, compact-source, prompt-dialog, bounded-media, focus-return, and no-automatic-scroll states have regression coverage.
-- Generation-run direct-style, source-reuse, isolation, selection, and read-only history behavior has regression coverage.
+- Frontend running, failed, stale, partial-success, completed, private-asset, compact-source, missing-media-frame, one-line prompt-preview/full-dialog, bounded-media, focus-return, and no-automatic-scroll states have regression coverage.
+- Generation-run direct-style, source-reuse, isolation, selection, and read-only persistence behavior remains covered on the backend; the active project route does not expose those internal run controls.
 
 ## Deliberate omissions
 

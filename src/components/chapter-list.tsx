@@ -3,6 +3,12 @@ import { useState } from "react";
 
 import type { ChapterView } from "@/domain/project";
 import { ProjectDetailDialog } from "@/components/project-detail-dialog";
+import { ResultFramePlaceholder } from "@/components/result-frame-placeholder";
+
+function promptPreview(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 180 ? `${compact.slice(0, 180).trimEnd()}…` : compact;
+}
 
 function illustrationStatusCopy(chapter: ChapterView): string {
   if (chapter.illustration.status === "COMPLETED") return "Illustration saved";
@@ -16,18 +22,25 @@ function illustrationStatusCopy(chapter: ChapterView): string {
 
 function illustrationStatusClass(chapter: ChapterView): string {
   if (chapter.illustration.status === "COMPLETED") {
-    return "border-ink/20 bg-ink text-white";
+    return "bg-orange text-white";
   }
   if (
     chapter.illustration.status === "FAILED" ||
     chapter.illustration.isStale
   ) {
-    return "border-orange/35 bg-orange/10 text-orange-deep";
+    return "bg-orange/10 text-orange-deep";
   }
   if (chapter.illustration.status === "RUNNING") {
-    return "border-orange/35 bg-orange/10 text-orange-deep";
+    return "bg-orange/10 text-orange-deep";
   }
-  return "border-line bg-surface text-ink-muted";
+  return "bg-paper text-ink-muted";
+}
+
+function illustrationFrameLabel(chapter: ChapterView): string {
+  if (chapter.illustration.isStale) return "Interrupted";
+  if (chapter.illustration.status === "RUNNING") return "Generating";
+  if (chapter.illustration.status === "FAILED") return "Needs retry";
+  return "Queued";
 }
 
 function chapterProgressCopy(
@@ -47,7 +60,7 @@ function chapterProgressCopy(
 
   if (hasFailure) {
     return readOnly
-      ? `${completedCount} of ${chapters.length} saved · read-only history`
+      ? `${completedCount} of ${chapters.length} saved results`
       : `${completedCount} of ${chapters.length} saved · retry Illustrations above`;
   }
   if (hasRunning) return "Generating illustration";
@@ -71,97 +84,94 @@ export function ChapterList({
   if (chapters.length === 0) return null;
 
   return (
-    <section aria-labelledby="chapters-heading" className="mt-8">
-      <div className="mb-4 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-            Chapter
+    <section aria-labelledby="chapters-heading" className="mt-6">
+      <div className="w-full">
+        <div className="mb-3 flex flex-wrap items-end justify-between gap-4">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
+              Chapter
+            </p>
+            <h2 className="mt-1 text-2xl font-semibold" id="chapters-heading">
+              Chapters{" "}
+              <span className="text-ink-muted">({chapters.length})</span>
+            </h2>
+          </div>
+          <p aria-live="polite" className="text-xs text-ink-muted">
+            {chapterProgressCopy(chapters, readOnly)}
           </p>
-          <h2 className="mt-2 text-2xl font-semibold" id="chapters-heading">
-            Chapters <span className="text-ink-muted">({chapters.length})</span>
-          </h2>
         </div>
-        <p aria-live="polite" className="text-xs text-ink-muted">
-          {chapterProgressCopy(chapters, readOnly)}
-        </p>
-      </div>
-
-      <div className="grid gap-4">
-        {chapters.map((chapter) => (
-          <article
-            aria-busy={chapter.illustration.status === "RUNNING"}
-            className="overflow-hidden rounded-2xl border border-line/60 bg-surface shadow-[0_10px_30px_rgba(35,31,32,0.05)]"
-            key={chapter.id}
-          >
-            <div className="grid lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
-              <div className="relative mx-auto aspect-[16/10] w-full max-w-[608px] overflow-hidden bg-paper">
-                {chapter.illustration.assetUrl ? (
-                  <Image
-                    alt={`Illustration for ${chapter.name}`}
-                    className="object-cover"
-                    fill
-                    sizes="(min-width: 1024px) 55vw, 100vw"
-                    src={chapter.illustration.assetUrl}
-                    unoptimized
-                  />
-                ) : (
-                  <div className="flex h-full min-h-52 items-center justify-center px-6 text-center">
-                    <div>
-                      {chapter.illustration.status === "RUNNING" ? (
-                        <span
-                          aria-hidden="true"
-                          className="mx-auto mb-3 block size-8 animate-pulse rounded-full border-2 border-orange/40 border-t-orange"
-                        />
-                      ) : (
-                        <span
-                          aria-hidden="true"
-                          className="mx-auto mb-3 block size-10 rounded-full border border-line bg-surface"
-                        />
-                      )}
-                      <p className="text-sm font-semibold text-ink-body">
-                        {illustrationStatusCopy(chapter)}
-                      </p>
-                    </div>
-                  </div>
-                )}
-              </div>
-              <div className="p-5 sm:p-6">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <h3 className="text-lg font-semibold">{chapter.name}</h3>
-                  <span
-                    className={`rounded-full border px-2.5 py-1 text-[11px] font-bold uppercase tracking-[0.08em] ${illustrationStatusClass(chapter)}`}
-                  >
-                    {illustrationStatusCopy(chapter)}
-                  </span>
+        <div className="grid gap-4">
+          {chapters.map((chapter) => (
+            <article
+              aria-busy={chapter.illustration.status === "RUNNING"}
+              className="overflow-hidden rounded-2xl border border-line/60 bg-surface shadow-[0_10px_30px_rgba(35,31,32,0.05)]"
+              key={chapter.id}
+            >
+              <div className="grid lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
+                <div className="relative aspect-[16/10] w-full overflow-hidden bg-paper">
+                  {chapter.illustration.assetUrl ? (
+                    <Image
+                      alt={`Illustration for ${chapter.name}`}
+                      className="object-cover"
+                      fill
+                      sizes="(min-width: 1024px) 60vw, 100vw"
+                      src={chapter.illustration.assetUrl}
+                      unoptimized
+                    />
+                  ) : (
+                    <ResultFramePlaceholder
+                      kind="chapter"
+                      label={illustrationFrameLabel(chapter)}
+                    />
+                  )}
                 </div>
-                <button
-                  className="mt-4 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-ink-body underline decoration-line underline-offset-4 transition hover:bg-paper hover:text-ink"
-                  onClick={() => setSelectedChapter(chapter)}
-                  type="button"
-                >
-                  View illustration prompt
-                </button>
-                {chapter.illustration.status === "FAILED" ? (
+                <div className="p-5 sm:p-6">
+                  <div className="flex flex-wrap items-start justify-between gap-3">
+                    <h3 className="text-lg font-semibold">{chapter.name}</h3>
+                    <span
+                      className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.08em] ${illustrationStatusClass(chapter)}`}
+                    >
+                      {illustrationStatusCopy(chapter)}
+                    </span>
+                  </div>
                   <p
-                    className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep"
-                    role="alert"
+                    className="mt-3 truncate text-sm leading-6 text-ink-body"
+                    title={chapter.prompt}
                   >
-                    {chapter.illustration.errorMessage ??
-                      (readOnly
-                        ? "This previous run is read-only. Start a new generation run to try again."
-                        : "This illustration could not be generated. Retry Illustrations above.")}
+                    {promptPreview(chapter.prompt)}
                   </p>
-                ) : chapter.illustration.isStale ? (
-                  <p className="mt-4 rounded-xl border border-orange/30 bg-orange/10 p-3 text-sm leading-6 text-orange-deep">
-                    {readOnly
-                      ? "This previous run is read-only. Start a new generation run to try again."
-                      : "Recover the Illustrations run above before retrying it."}
-                  </p>
-                ) : null}
+                  <button
+                    className="mt-2 inline-flex min-h-10 items-center rounded-xl px-2 text-sm font-semibold text-orange-deep underline decoration-line underline-offset-4 transition hover:bg-paper"
+                    onClick={() => setSelectedChapter(chapter)}
+                    type="button"
+                  >
+                    Read full prompt
+                    <span aria-hidden="true" className="ml-1">
+                      →
+                    </span>
+                  </button>
+                  {chapter.illustration.status === "FAILED" ? (
+                    <p
+                      className="mt-4 rounded-xl border-l-2 border-orange bg-orange/10 p-3 text-sm leading-6 text-orange-deep"
+                      role="alert"
+                    >
+                      {chapter.illustration.errorMessage ??
+                        (readOnly
+                          ? "This saved output cannot be retried here."
+                          : "This illustration could not be generated. Retry Illustrations above.")}
+                    </p>
+                  ) : chapter.illustration.isStale ? (
+                    <p className="mt-4 rounded-xl border-l-2 border-orange bg-orange/10 p-3 text-sm leading-6 text-orange-deep">
+                      {readOnly
+                        ? "This saved output cannot be retried here."
+                        : "Recover the Illustrations run above before retrying it."}
+                    </p>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          </article>
-        ))}
+            </article>
+          ))}
+        </div>
       </div>
       {selectedChapter ? (
         <ProjectDetailDialog

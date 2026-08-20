@@ -71,30 +71,6 @@ function projectFixture(): ProjectDetailView {
   };
 }
 
-function generationRunFixture(
-  input: Partial<GenerationRunView> & Pick<GenerationRunView, "id">,
-): GenerationRunView {
-  const { id, ...overrides } = input;
-  return {
-    completedAt: null,
-    completedSteps: 0,
-    createdAt: "2026-01-01T00:00:00.000Z",
-    id,
-    imageModelId: "gemini-test-image",
-    isSelected: false,
-    isWritable: false,
-    promptVersion: "book-illustration-v1",
-    sourceSnapshotHash: "source-hash",
-    status: "COMPLETED",
-    style: "Watercolor",
-    styleRevision: "style-revision",
-    textModelId: "gemini-test-text",
-    totalSteps: 5,
-    updatedAt: "2026-01-01T00:00:00.000Z",
-    ...overrides,
-  };
-}
-
 describe("foundation app shell", () => {
   it("shows the studio title and the five-step contract", () => {
     render(<IdentityForm />);
@@ -198,198 +174,37 @@ describe("foundation app shell", () => {
     expect(screen.getAllByText("Pending").length).toBeGreaterThan(0);
   });
 
-  it("selects a saved run without generation and renders it read-only", async () => {
-    const currentRun = generationRunFixture({
-      completedSteps: 1,
-      id: "run-current",
-      isSelected: true,
-      isWritable: true,
-      status: "ACTIVE",
-      style: "Anime",
-    });
-    const previousRun = generationRunFixture({
-      completedSteps: 2,
-      id: "run-previous",
-      style: "Watercolor",
-    });
-    const current = projectFixture();
-    current.activeGenerationRunId = currentRun.id;
-    current.completedSteps = 1;
-    current.generationRuns = [currentRun, previousRun];
-    current.selectedRunReadOnly = false;
-    current.status = "IN_PROGRESS";
-    current.style = currentRun.style;
-    current.steps[0] = { ...current.steps[0], status: "COMPLETED" };
-    const selectedPrevious = {
-      ...current,
-      activeGenerationRunId: previousRun.id,
-      generationRuns: [
-        { ...currentRun, isSelected: false, isWritable: false },
-        { ...previousRun, isSelected: true },
-      ],
-      selectedRunReadOnly: true,
-      style: previousRun.style,
-    };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ run: previousRun }),
-      })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ project: selectedPrevious }),
-      });
-    vi.stubGlobal("fetch", fetchMock);
+  it("keeps generation history out of the project workspace", () => {
+    const project = projectFixture();
+    project.generationRuns = [
+      { id: "run-current", isSelected: true } as GenerationRunView,
+      { id: "run-previous", isSelected: false } as GenerationRunView,
+    ];
 
-    render(<ProjectDetail project={current} user={user} />);
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(screen.queryByText("Generation history")).not.toBeInTheDocument();
     expect(
-      screen.getByText("Selecting a run does not call Gemini"),
+      screen.queryByRole("button", { name: "Use previous run" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByText(/Current generation run/i),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps saved output neutral when the server marks it read-only", () => {
+    const project = projectFixture();
+    project.selectedRunReadOnly = true;
+
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(screen.getByText("Saved results")).toBeInTheDocument();
+    expect(
+      screen.getByText("Results are ready to revisit."),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Use previous run" }));
-
-    await waitFor(() => {
-      expect(screen.getByText("Read-only history")).toBeInTheDocument();
-    });
-    expect(fetchMock).toHaveBeenCalledWith(
-      "/api/projects/project-1/generation-runs/run-previous/select",
-      { method: "POST" },
-    );
     expect(
-      fetchMock.mock.calls.some(
-        ([url]) =>
-          String(url).includes("/steps/") ||
-          String(url).includes("/generation"),
-      ),
-    ).toBe(true);
-    expect(
-      fetchMock.mock.calls.some(([url]) => String(url).includes("/steps/")),
-    ).toBe(false);
-  });
-
-  it("does not expose retry actions for failed output in read-only history", () => {
-    const project = projectFixture();
-    project.activeGenerationRunId = "run-previous";
-    project.generationRuns = [
-      generationRunFixture({
-        id: "run-previous",
-        isSelected: true,
-        style: "Watercolor",
-      }),
-    ];
-    project.selectedRunReadOnly = true;
-    project.style = "Watercolor";
-    project.characters = [
-      {
-        id: "character-1",
-        name: "Mole",
-        position: 0,
-        prompt: "An adult mole portrait prompt.",
-        portrait: {
-          assetId: null,
-          assetUrl: null,
-          attempt: 1,
-          claimedAt: "2026-01-01T00:00:00.000Z",
-          errorCode: "GEMINI_FAILED",
-          errorMessage: "Portrait generation failed.",
-          heartbeatAt: "2026-01-01T00:00:00.000Z",
-          isStale: false,
-          status: "FAILED",
-        },
-      },
-    ];
-    project.chapters = [
-      {
-        id: "chapter-1",
-        name: "The River",
-        position: 0,
-        prompt: "A single river scene.",
-        illustration: {
-          assetId: null,
-          assetUrl: null,
-          attempt: 1,
-          claimedAt: "2026-01-01T00:00:00.000Z",
-          errorCode: "GEMINI_FAILED",
-          errorMessage: "Illustration generation failed.",
-          heartbeatAt: "2026-01-01T00:00:00.000Z",
-          isStale: false,
-          status: "FAILED",
-        },
-      },
-    ];
-
-    render(<ProjectDetail project={project} user={user} />);
-
-    expect(screen.getByText("Read-only history")).toBeInTheDocument();
-    expect(
-      screen.queryByRole("button", { name: "Retry portrait" }),
+      screen.queryByText(/previous run|generation history/i),
     ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/retry Illustrations above/i),
-    ).not.toBeInTheDocument();
-    expect(screen.getAllByText(/read-only history/i).length).toBeGreaterThan(0);
-  });
-
-  it("uses read-only recovery copy for stale history output", () => {
-    const project = projectFixture();
-    project.activeGenerationRunId = "run-previous";
-    project.generationRuns = [
-      generationRunFixture({
-        id: "run-previous",
-        isSelected: true,
-        style: "Watercolor",
-      }),
-    ];
-    project.selectedRunReadOnly = true;
-    project.style = "Watercolor";
-    project.characters = [
-      {
-        id: "character-1",
-        name: "Mole",
-        position: 0,
-        prompt: "An adult mole portrait prompt.",
-        portrait: {
-          assetId: null,
-          assetUrl: null,
-          attempt: 1,
-          claimedAt: "2026-01-01T00:00:00.000Z",
-          errorCode: "STALE_RUN",
-          errorMessage: null,
-          heartbeatAt: "2026-01-01T00:00:00.000Z",
-          isStale: true,
-          status: "RUNNING",
-        },
-      },
-    ];
-    project.chapters = [
-      {
-        id: "chapter-1",
-        name: "The River",
-        position: 0,
-        prompt: "A single river scene.",
-        illustration: {
-          assetId: null,
-          assetUrl: null,
-          attempt: 1,
-          claimedAt: "2026-01-01T00:00:00.000Z",
-          errorCode: "GEMINI_FAILED",
-          errorMessage: null,
-          heartbeatAt: "2026-01-01T00:00:00.000Z",
-          isStale: false,
-          status: "FAILED",
-        },
-      },
-    ];
-
-    render(<ProjectDetail project={project} user={user} />);
-
-    expect(
-      screen.queryByText(/Recover the Portraits run above/i),
-    ).not.toBeInTheDocument();
-    expect(
-      screen.queryByText(/Retry Illustrations above/i),
-    ).not.toBeInTheDocument();
-    expect(screen.getAllByText(/start a new generation run/i).length).toBe(3);
   });
 
   it("renders a saved portrait beside a retryable partial failure", () => {
@@ -436,6 +251,10 @@ describe("foundation app shell", () => {
     );
 
     expect(screen.getByAltText("Portrait of Mole")).toBeInTheDocument();
+    expect(screen.getByText("Portrait saved")).toHaveClass(
+      "bg-orange",
+      "text-white",
+    );
     expect(
       screen.getByText("Mock image service rejected Rat."),
     ).toBeInTheDocument();
@@ -673,7 +492,8 @@ describe("foundation app shell", () => {
       />,
     );
 
-    expect(screen.getAllByText("Illustration failed")).toHaveLength(2);
+    expect(screen.getAllByText("Illustration failed")).toHaveLength(1);
+    expect(screen.getByText("Needs retry")).toBeInTheDocument();
     expect(
       screen.getByText("0 of 1 saved · retry Illustrations above"),
     ).toBeInTheDocument();
@@ -816,9 +636,23 @@ describe("foundation app shell", () => {
     expect(
       screen.getByText("All five steps are complete."),
     ).toBeInTheDocument();
+    expect(screen.getByText("Done")).toHaveClass("bg-orange", "text-white");
+    expect(
+      screen
+        .getAllByText("✓")
+        .every((mark) => mark.classList.contains("bg-orange")),
+    ).toBe(true);
     expect(
       screen.getByRole("button", { name: "Read full text" }),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Art style" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Book text" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Saved style")).not.toBeInTheDocument();
+    expect(screen.queryByText("Book text preview")).not.toBeInTheDocument();
     expect(screen.queryByText("Full book text")).not.toBeInTheDocument();
   });
 
@@ -843,6 +677,23 @@ describe("foundation app shell", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("truncates long style context with an accessible details dialog", () => {
+    const style = "Warm watercolor with layered ink texture. ".repeat(8);
+    const project = { ...projectFixture(), style };
+
+    render(<ProjectDetail project={project} user={user} />);
+    const trigger = screen.getByRole("button", { name: "View full style" });
+
+    trigger.focus();
+    fireEvent.click(trigger);
+
+    const dialog = screen.getByRole("dialog", { name: "Saved art style" });
+    expect(dialog).toHaveTextContent(style.trim());
+
+    fireEvent.keyDown(dialog, { key: "Escape" });
+    expect(trigger).toHaveFocus();
+  });
+
   it("opens long prompts without changing the portrait frame or scrolling", () => {
     const scrollIntoView = vi.fn();
     Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
@@ -850,7 +701,9 @@ describe("foundation app shell", () => {
       value: scrollIntoView,
     });
     const prompt =
-      "An adult mole portrait with detailed clothing, posture, warm light, and a consistent storybook palette.";
+      "An adult mole portrait with detailed clothing, posture, warm light, and a consistent storybook palette. ".repeat(
+        3,
+      );
 
     const { unmount } = render(
       <CharacterGrid
@@ -876,19 +729,21 @@ describe("foundation app shell", () => {
       />,
     );
 
-    const frame = screen
-      .getAllByText("Portrait pending")[0]
-      .closest("div.relative");
-    expect(frame).toHaveClass("max-w-[320px]");
+    const frame = screen.getByText("Queued").closest("div.relative");
+    expect(frame).toHaveClass("w-full");
+    expect(frame).not.toHaveClass("max-w-[320px]");
+    expect(
+      screen.getByText(/An adult mole portrait with detailed clothing/),
+    ).toBeInTheDocument();
     const trigger = screen.getByRole("button", {
-      name: "View portrait prompt",
+      name: "Read full prompt",
     });
     trigger.focus();
     fireEvent.click(trigger);
     expect(
       screen.getByRole("dialog", { name: "Mole portrait prompt" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(prompt)).toBeInTheDocument();
+    expect(screen.getByRole("dialog")).toHaveTextContent(prompt.trim());
     expect(scrollIntoView).not.toHaveBeenCalled();
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
@@ -983,9 +838,16 @@ describe("foundation app shell", () => {
     );
 
     const image = screen.getByAltText("Illustration for The River");
-    expect(image.parentElement).toHaveClass("max-w-[608px]");
+    expect(image.parentElement).toHaveClass("w-full");
+    expect(image.parentElement).not.toHaveClass("max-w-[608px]");
+    expect(image.parentElement).not.toHaveClass("max-h-[380px]");
     expect(
-      screen.getByRole("button", { name: "View illustration prompt" }),
+      screen.getByRole("button", { name: "Read full prompt" }),
     ).toBeInTheDocument();
+    expect(screen.getByText("Illustration saved")).toHaveClass(
+      "bg-orange",
+      "text-white",
+    );
+    expect(screen.getByText("A single river scene.")).toBeInTheDocument();
   });
 });

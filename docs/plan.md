@@ -268,6 +268,11 @@ While polling, the client may update transient visual state but must always repl
 
 This is a focused UX fix slice before handoff. It addresses observed trust, layout, and waiting-time problems without adding new product scope.
 
+Approved implementation boundary for this slice: keep the active route focused on
+one project pipeline and its saved results. The active route must not present
+generation history, cache keys, previous-run selectors, or internal Gemini
+details. Server-side run metadata and recovery contracts remain unchanged.
+
 #### P0 — Make long-running work legible
 
 - Replace spinner-only feedback with an animated indeterminate progress bar, named phase copy, and elapsed time from the persisted run start. Never show a guessed percentage or promise an ETA that Gemini does not provide.
@@ -295,13 +300,16 @@ This is a focused UX fix slice before handoff. It addresses observed trust, layo
 - Replace the permanent full-book panel with a short source preview, character count, and `Read full text` action. Keep the complete text in a bounded accessible dialog with Escape and focus return.
 - Keep the saved style and source preview together as compact context cards so either remains available at every pipeline stage.
 - Bound portrait media near 3:4 and illustration media near 16:10 with responsive widths and stable frames; prompt content must not determine image height.
+- Use a code-native editorial paper composition for missing media: no centered spinner, avatar icon, or empty white gutters; keep the state label anchored away from the focal center.
 - Acceptance: the primary workspace is scannable at 375px, 768px, 1024px, and 1440px without hiding the source, style, status, retry, or recovery paths.
 
 #### P1 — Keep prompts from resizing artwork
 
 - Replace inline expanding `<details>` for long illustration prompts with an accessible modal or bounded prompt panel (`max-height` plus internal scrolling).
+- Show a short prompt preview in each character/chapter card so the result is understandable before opening the full prompt.
+- Keep the preview to one readable line and use the existing brand paper/ink/orange tokens with restrained borders.
 - Keep the image container fixed and top-aligned even when prompt content grows; the prompt must never determine the illustration height.
-- Acceptance: opening `View illustration prompt` does not change the illustration's 16:10 framing or create a long viewport jump; Escape, focus return, keyboard access, and reduced motion work.
+- Acceptance: opening `Read full prompt` does not change the illustration's 16:10 framing or create a long viewport jump; Escape, focus return, keyboard access, and reduced motion work.
 
 #### P1 — Remove low-value visual noise
 

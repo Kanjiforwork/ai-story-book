@@ -8,7 +8,7 @@ import {
   PIPELINE_STEP_LABELS,
   isImplementedPipelineStep,
 } from "@/domain/pipeline";
-import type { GenerationRunView, ProjectDetailView } from "@/domain/project";
+import type { ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
 import { ChapterList } from "@/components/chapter-list";
 import { CharacterGrid } from "@/components/character-grid";
@@ -29,6 +29,11 @@ function sourcePreview(value: string): string {
   return compact.length > 220 ? `${compact.slice(0, 220)}…` : compact;
 }
 
+function stylePreview(value: string): string {
+  const compact = value.replace(/\s+/g, " ").trim();
+  return compact.length > 180 ? `${compact.slice(0, 180)}…` : compact;
+}
+
 export function ProjectDetail({
   project: initialProject,
   user,
@@ -45,13 +50,12 @@ export function ProjectDetail({
   const [retryingCharacterId, setRetryingCharacterId] = useState<string | null>(
     null,
   );
-  const [regenerating, setRegenerating] = useState(false);
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
+  const [styleDialogOpen, setStyleDialogOpen] = useState(false);
   const latestRefreshId = useRef(0);
   const implementedSteps = project.steps.filter((step) =>
     isImplementedPipelineStep(step.key),
   );
-  const selectedRun = project.generationRuns?.find((run) => run.isSelected);
   const selectedRunReadOnly = project.selectedRunReadOnly ?? false;
   const currentStep = selectedRunReadOnly
     ? null
@@ -86,6 +90,7 @@ export function ProjectDetail({
       !step.run.isStale,
   );
   const portraitStep = project.steps.find((step) => step.key === "PORTRAITS");
+  const styleNeedsDialog = Boolean(project.style && project.style.length > 180);
 
   async function refreshProject() {
     const refreshId = latestRefreshId.current + 1;
@@ -211,60 +216,6 @@ export function ProjectDetail({
     }
   }
 
-  async function selectRun(run: GenerationRunView) {
-    setActionError(null);
-    try {
-      const response = await fetch(
-        `/api/projects/${project.id}/generation-runs/${run.id}/select`,
-        { method: "POST" },
-      );
-      const payload = (await response.json()) as { message?: string };
-      if (!response.ok) {
-        setActionError(payload.message ?? "This run could not be selected.");
-        return;
-      }
-      await refreshProject();
-    } catch {
-      setActionError("The server could not be reached. Try again.");
-    }
-  }
-
-  async function regenerateRun() {
-    const style = styleDraft.trim();
-    if (
-      !window.confirm(
-        "Start a new generation run? Existing results will remain available as a previous run.",
-      )
-    ) {
-      return;
-    }
-    setRegenerating(true);
-    setActionError(null);
-    try {
-      const response = await fetch(
-        `/api/projects/${project.id}/generation-runs`,
-        {
-          body: JSON.stringify({ style }),
-          headers: { "content-type": "application/json" },
-          method: "POST",
-        },
-      );
-      const payload = (await response.json()) as { message?: string };
-      if (!response.ok) {
-        setActionError(
-          payload.message ?? "A new generation run could not start.",
-        );
-        return;
-      }
-      setStyleDraft("");
-      await refreshProject();
-    } catch {
-      setActionError("The server could not be reached. Try again.");
-    } finally {
-      setRegenerating(false);
-    }
-  }
-
   return (
     <AppShell user={user}>
       <main className="mx-auto max-w-6xl px-4 py-6 sm:px-6 sm:py-8 lg:px-8">
@@ -286,76 +237,16 @@ export function ProjectDetail({
             Created {formatDate(project.createdAt)} · {project.completedSteps}{" "}
             of {project.totalSteps} steps complete
           </p>
-          {selectedRun ? (
-            <p className="mt-2 text-xs font-semibold uppercase tracking-[0.12em] text-ink-muted">
-              {selectedRunReadOnly
-                ? "Viewing previous run"
-                : "Current generation run"}{" "}
-              · {selectedRun.style ?? "Style pending"}
-            </p>
-          ) : null}
         </div>
-
-        {project.generationRuns && project.generationRuns.length > 1 ? (
-          <section
-            aria-labelledby="runs-heading"
-            className="mt-5 rounded-2xl bg-paper p-4 sm:p-5"
-          >
-            <div className="flex flex-wrap items-end justify-between gap-4">
-              <div>
-                <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-                  Generation history
-                </p>
-                <h2 className="mt-1 text-xl font-semibold" id="runs-heading">
-                  Choose a saved run
-                </h2>
-              </div>
-              <span className="text-xs text-ink-muted">
-                Selecting a run does not call Gemini
-              </span>
-            </div>
-            <div className="mt-4 grid gap-3 md:grid-cols-2">
-              {project.generationRuns.map((run) => (
-                <article
-                  className="rounded-2xl border border-line/60 bg-surface p-4"
-                  key={run.id}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-semibold">
-                        {run.style ?? "Style pending"}
-                      </h3>
-                      <p className="mt-1 text-xs text-ink-muted">
-                        {run.completedSteps} of {run.totalSteps} steps ·{" "}
-                        {run.status.toLowerCase()}
-                      </p>
-                    </div>
-                    {run.isSelected ? (
-                      <span className="rounded-full bg-ink px-2.5 py-1 text-[11px] font-bold text-white">
-                        Selected
-                      </span>
-                    ) : (
-                      <button
-                        className="min-h-10 rounded-xl border border-line px-3 text-xs font-bold text-ink-body transition hover:border-orange hover:text-orange-deep"
-                        onClick={() => void selectRun(run)}
-                        type="button"
-                      >
-                        Use previous run
-                      </button>
-                    )}
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        ) : null}
 
         <section aria-labelledby="stepper-heading" className="mt-5">
           <div className="mb-3 flex items-center justify-between gap-4">
             <h2 className="text-lg font-semibold" id="stepper-heading">
               Pipeline progress
             </h2>
-            <span className="rounded-full bg-line/40 px-3 py-1 text-xs font-bold text-ink-body">
+            <span
+              className={`rounded-full px-3 py-1 text-xs font-bold ${project.status === "DONE" ? "bg-orange text-white" : "bg-line/40 text-ink-body"}`}
+            >
               {project.status === "DRAFT"
                 ? "Draft"
                 : project.status === "DONE"
@@ -376,7 +267,7 @@ export function ProjectDetail({
                   <span
                     className={`flex size-7 shrink-0 items-center justify-center rounded-full text-[11px] font-bold sm:size-8 sm:text-xs ${
                       step.status === "COMPLETED"
-                        ? "bg-ink text-white"
+                        ? "bg-orange text-white"
                         : step.status === "RUNNING"
                           ? "bg-orange text-white"
                           : step.status === "FAILED"
@@ -406,27 +297,25 @@ export function ProjectDetail({
           </ol>
         </section>
 
-        <div className="mt-5 grid items-start gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(18rem,0.75fr)]">
+        <div className="mt-5 space-y-4">
           {selectedRunReadOnly ? (
-            <section className="rounded-2xl border border-line/60 bg-paper p-5 sm:p-6">
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-                Read-only history
-              </p>
-              <h2 className="mt-1 text-xl font-semibold">
-                Saved output from a previous run
-              </h2>
-              <p className="mt-3 text-sm leading-6 text-ink-body">
-                Use these results for reference, or start a new generation run
-                when you want fresh output.
-              </p>
-              <button
-                className="mt-5 inline-flex min-h-11 items-center rounded-xl bg-orange px-4 text-sm font-bold text-white transition hover:bg-orange-hover disabled:opacity-60"
-                disabled={regenerating}
-                onClick={() => void regenerateRun()}
-                type="button"
-              >
-                {regenerating ? "Starting…" : "Regenerate"}
-              </button>
+            <section className="rounded-2xl border border-line/60 bg-paper px-5 py-4 sm:px-6">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+                <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-orange text-sm font-bold text-white">
+                  ✓
+                </span>
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
+                    Saved results
+                  </p>
+                  <h2 className="mt-1 text-xl font-semibold">
+                    Results are ready to revisit.
+                  </h2>
+                </div>
+                <p className="text-sm leading-6 text-ink-body sm:ml-auto">
+                  Saved output is kept here so you can review it safely.
+                </p>
+              </div>
             </section>
           ) : (
             <StepActionPanel
@@ -441,30 +330,41 @@ export function ProjectDetail({
               itemProgress={itemProgress}
             />
           )}
-          <aside className="rounded-2xl bg-paper p-5 sm:p-6">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
+          <div className="grid items-stretch gap-4 lg:grid-cols-2">
+            <section
+              aria-labelledby="style-context-heading"
+              className="flex min-h-56 flex-col rounded-2xl bg-surface p-5 sm:p-6"
+            >
+              <h2 className="text-xl font-semibold" id="style-context-heading">
                 Art style
-              </p>
-              <h2 className="mt-1 text-xl font-semibold">
-                {project.style ? "Saved style" : "Style not generated"}
               </h2>
               <p className="mt-3 text-sm leading-6 text-ink-body">
-                {project.style ??
-                  "Generate Style first. Characters will use the saved style as context."}
+                {project.style
+                  ? stylePreview(project.style)
+                  : "Generate Style first. Characters will use the saved style as context."}
               </p>
-            </div>
+              {styleNeedsDialog ? (
+                <button
+                  className="mt-auto inline-flex min-h-11 self-start items-center rounded-xl px-2 py-2 text-sm font-semibold text-orange-deep underline decoration-line underline-offset-4 transition hover:bg-orange/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15"
+                  onClick={() => setStyleDialogOpen(true)}
+                  type="button"
+                >
+                  View full style
+                </button>
+              ) : null}
+            </section>
 
-            <div className="mt-5 border-t border-line/60 pt-5">
+            <section
+              aria-labelledby="source-context-heading"
+              className="flex min-h-56 flex-col rounded-2xl bg-surface p-5 sm:p-6"
+            >
               <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-bold uppercase tracking-[0.16em] text-ink-muted">
-                    Source material
-                  </p>
-                  <h2 className="mt-1 text-xl font-semibold">
-                    Book text preview
-                  </h2>
-                </div>
+                <h2
+                  className="text-xl font-semibold"
+                  id="source-context-heading"
+                >
+                  Book text
+                </h2>
                 <span className="shrink-0 text-right text-xs tabular-nums text-ink-muted">
                   {project.bookText.length.toLocaleString()} chars
                 </span>
@@ -473,47 +373,25 @@ export function ProjectDetail({
                 {sourcePreview(project.bookText)}
               </p>
               <button
-                className="mt-3 inline-flex min-h-11 items-center rounded-xl px-2 text-sm font-semibold text-orange-deep underline decoration-line underline-offset-4 transition hover:bg-white"
+                className="mt-auto inline-flex min-h-11 self-start items-center rounded-xl px-2 py-2 text-sm font-semibold text-orange-deep underline decoration-line underline-offset-4 transition hover:bg-orange/10 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15"
                 onClick={() => setSourceDialogOpen(true)}
                 type="button"
               >
                 Read full text
               </button>
-            </div>
-
-            {!selectedRunReadOnly && currentStep?.key !== "STYLE" ? (
-              <div className="mt-5 border-t border-line/60 pt-5">
-                <label
-                  className="block text-sm font-semibold"
-                  htmlFor="regenerate-style"
-                >
-                  New style for a fresh run
-                </label>
-                <input
-                  className="mt-2 min-h-11 w-full rounded-xl border border-line bg-surface px-3 text-sm outline-none focus:border-orange focus:ring-4 focus:ring-orange/15"
-                  id="regenerate-style"
-                  maxLength={500}
-                  onChange={(event) => setStyleDraft(event.target.value)}
-                  placeholder="e.g. ink wash with copper accents"
-                  value={styleDraft}
-                />
-                <button
-                  className="mt-3 min-h-11 rounded-xl border border-orange px-4 text-sm font-bold text-orange-deep transition hover:bg-orange hover:text-white disabled:opacity-60"
-                  disabled={regenerating}
-                  onClick={() => void regenerateRun()}
-                  type="button"
-                >
-                  {regenerating ? "Starting…" : "Start new run"}
-                </button>
-              </div>
-            ) : null}
-          </aside>
+            </section>
+          </div>
         </div>
 
-        <ChapterList
-          chapters={project.chapters}
-          readOnly={selectedRunReadOnly}
-        />
+        {project.characters.length > 0 || project.chapters.length > 0 ? (
+          <div className="mt-8 flex items-center gap-4">
+            <div className="h-px flex-1 bg-line/60" />
+            <p className="text-xs font-bold uppercase tracking-[0.18em] text-ink-muted">
+              Generated results
+            </p>
+            <div className="h-px flex-1 bg-line/60" />
+          </div>
+        ) : null}
 
         <CharacterGrid
           characters={project.characters}
@@ -529,12 +407,25 @@ export function ProjectDetail({
           retryingCharacterId={retryingCharacterId}
         />
 
+        <ChapterList
+          chapters={project.chapters}
+          readOnly={selectedRunReadOnly}
+        />
+
         <ProjectDetailDialog
           onClose={() => setSourceDialogOpen(false)}
           open={sourceDialogOpen}
           title="Full book text"
         >
           <p className="whitespace-pre-wrap">{project.bookText}</p>
+        </ProjectDetailDialog>
+
+        <ProjectDetailDialog
+          onClose={() => setStyleDialogOpen(false)}
+          open={styleDialogOpen}
+          title="Saved art style"
+        >
+          <p className="whitespace-pre-wrap">{project.style}</p>
         </ProjectDetailDialog>
       </main>
     </AppShell>
