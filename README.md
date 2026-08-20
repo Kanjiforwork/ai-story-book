@@ -17,13 +17,15 @@ The application keeps generated text, progress, and private image assets on the 
 
 Copy `.env.example` to `.env.local` and set values as needed:
 
-| Variable               | Purpose                                     | Safe local default     |
-| ---------------------- | ------------------------------------------- | ---------------------- |
-| `GEMINI_API_KEY`       | Server-only Gemini credential               | empty for mocked tests |
-| `GEMINI_TEXT_MODEL`    | Text-generation model override              | application default    |
-| `GEMINI_IMAGE_MODEL`   | Image-generation model override             | application default    |
-| `GRADION_DATA_DIR`     | SQLite database and private asset directory | `./data`               |
-| `GRADION_STALE_RUN_MS` | Age after which a heartbeat is stale        | `120000`               |
+| Variable               | Purpose                                     | Example/tested value     |
+| ---------------------- | ------------------------------------------- | ------------------------ |
+| `GEMINI_API_KEY`       | Server-only Gemini credential               | empty for mocked tests   |
+| `GEMINI_TEXT_MODEL`    | Text-generation model                       | `gemini-3.6-flash`       |
+| `GEMINI_IMAGE_MODEL`   | Image-generation model                      | `gemini-3.1-flash-image` |
+| `GRADION_DATA_DIR`     | SQLite database and private asset directory | `./data`                 |
+| `GRADION_STALE_RUN_MS` | Age after which a heartbeat is stale        | `120000`                 |
+
+The model IDs above are the configuration used for the verified local Gemini flow. They remain environment overrides so they can be updated when Google retires a model.
 
 Never commit `.env.local`, API keys, or generated private assets.
 
@@ -68,7 +70,7 @@ npm run build
 
 Completed results are written as soon as they are available. Portrait and illustration items therefore retain successful assets when a later item fails. A failed step can be retried explicitly; a stale running step can be recovered explicitly and then retried as a new step attempt in the same generation run. Upstream style, character, portrait, and chapter results remain persisted during downstream retries.
 
-The source book is uploaded to Gemini lazily on the first text-generation call and its reusable file reference is stored at project scope. Each generation run stores its source snapshot, exact style or style revision, prompt/model metadata, text interaction chain, and generated characters, chapters, interactions, and assets. Selecting a previous run reads its persisted output without calling Gemini; `Regenerate` creates a new isolated run while reusing the project source reference.
+The source book is uploaded to Gemini lazily on the first text-generation call and its reusable file reference is stored at project scope. Before a fresh interaction root reuses that reference, the server verifies that the Gemini file still exists; an expired file is uploaded again, while transient lookup failures remain explicit errors. Each internal generation run stores its source snapshot, exact style or style revision, prompt/model metadata, text interaction chain, and generated characters, chapters, interactions, and assets. The primary UI intentionally shows only the project's current pipeline and saved results rather than exposing run-history controls.
 
 The server enforces the assessment limits of at most two adult characters and one chapter, checks project ownership on project and asset operations, and rejects unsafe asset paths or missing backing files.
 
@@ -76,4 +78,4 @@ The server enforces the assessment limits of at most two adult characters and on
 
 The suite covers domain transitions, server routes/services, mocked Gemini output, duplicate claims, stale recovery, malformed output, partial image success, ownership, path safety, restart persistence, and representative frontend states. See [TESTING.md](TESTING.md) for the actual verification report.
 
-Real Gemini calls are intentionally not part of the automated or M5 verification run because they incur cost. The runner is a local in-process worker, not a distributed queue or multi-process job system. Polling is used instead of SSE/WebSockets, and local SQLite/filesystem storage is not a production deployment architecture.
+Real Gemini calls are intentionally not part of the automated verification gate because they incur cost; the configured flow was smoke-tested manually with a real key. The runner is a local in-process worker, not a distributed queue or multi-process job system. Polling is used instead of SSE/WebSockets, and local SQLite/filesystem storage is not a production deployment architecture.

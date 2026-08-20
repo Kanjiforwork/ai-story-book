@@ -1,6 +1,6 @@
 # Engineering Decisions
 
-This file records five real decisions from the planning and implementation conversations. It is not a diary, requirement summary, or architecture reference. Requirements such as server-side Gemini calls, the five-step pipeline, and demo coverage belong in `docs/plan.md` and `AGENTS.md`.
+This file records six real decisions from the planning and implementation conversations. It is not a diary, requirement summary, or architecture reference. Requirements such as server-side Gemini calls, the five-step pipeline, and demo coverage belong in `docs/plan.md` and `AGENTS.md`.
 
 ## 1. SQLite instead of JSON files
 
@@ -15,6 +15,8 @@ This file records five real decisions from the planning and implementation conve
 - My decision: keep durable progress, current execution state, and image-item state separate.
 - Result: the UI can show completed progress while a later step is running, failed, or stale; a successful portrait remains visible when another image fails.
 - Trade-off: image generation runs in parallel with per-item persistence, which requires more state fields and transition tests.
+
+The external call begins only after SQLite atomically creates and persists a step-attempt claim. A heartbeat keeps that claim fresh, and a persisted generation-run ID keeps every result attached to the same pipeline. Client-side button disabling is useful feedback, but it is not the duplicate-call guarantee.
 
 ## 3. Failure-first UX
 
@@ -38,7 +40,13 @@ This file records five real decisions from the planning and implementation conve
 - Behavior: reopening a project reads saved state without a Gemini call; changing style explicitly regenerates downstream results. Internal run metadata stays available for duplicate protection, stale recovery, and debugging, but remains hidden from the primary UX.
 - Trade-off: two projects with identical text may call Gemini independently and produce different output, but the product is easier to understand and safer to isolate.
 
+## 6. Tested model IDs instead of a moving “latest” default
+
+- AI review suggestion: replace empty model examples with current-looking defaults.
+- My pushback: a newer-sounding model name is not evidence that this application and its interaction/image contracts work with it.
+- Decision: document `gemini-3.6-flash` for text and `gemini-3.1-flash-image` for images because those are the environment values used by the real local flow. Keep both as environment overrides so a retired model can be changed without a code edit.
+- Trade-off: the examples will eventually age, but they give the reviewer a reproducible starting point instead of silently selecting an untested model.
+
 ## If I had one more day
 
-- Status: not decided yet.
-- Before submission, I will choose one concrete next feature based on real UAT instead of inventing a retrospective answer.
+I would build single-image art direction: let the user edit a character or chapter prompt and regenerate only that portrait or illustration, while keeping the previous successful image until the replacement succeeds. The current retry flow is safe for failures, but it does not help when a technically valid image is simply not the image the user wants.

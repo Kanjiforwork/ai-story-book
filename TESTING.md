@@ -2,9 +2,13 @@
 
 ## Strategy
 
-Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
+Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions and upgrades, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, expired-source reupload, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
 
-Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, hidden generation-history controls, neutral saved-output rendering, code-native missing-media frames, one-line prompt previews with full source/style and prompt dialogs, running and stale copy, retry affordances, private asset URLs, item progress, compact completion, bounded media, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, visible focus treatment, and the absence of history copy.
+Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, hidden generation-history controls, neutral saved-output rendering, code-native missing-media frames, one-line prompt previews with full source/style and prompt dialogs, running and stale copy, retry affordances, private non-cacheable asset responses, item progress, compact completion, bounded media, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, visible focus treatment, and the absence of history copy.
+
+## Manual real-Gemini smoke
+
+The application flow was also run manually with a real Gemini key using `gemini-3.6-flash` for text and `gemini-3.1-flash-image` for images. This is product smoke evidence, separate from the repeatable mocked test report below; no paid Gemini call is part of the automated gate.
 
 ## Actual generation-run verification
 
@@ -13,8 +17,8 @@ Commands were run sequentially from `/Users/bao/GitHub/ai-story-book`.
 ### `npm test`
 
 ```text
-Test Files  14 passed (14)
-Tests       65 passed (65)
+Test Files  15 passed (15)
+Tests       74 passed (74)
 ```
 
 ### `npm run check`
@@ -73,8 +77,10 @@ Covered by automated tests unless marked otherwise:
 - Portrait retry runs only failed items.
 - Chapter and illustration retries preserve upstream style, character, portrait, and chapter results.
 - Malformed or empty Gemini output fails the step with an actionable persisted error.
+- An expired stored Gemini file is uploaded again before a fresh interaction root; transient lookup errors do not trigger a hidden retry.
 - Server-side caps reject more than two adult characters or one chapter.
 - Project and asset ownership are checked server-side.
+- Successful private asset responses use `private, no-store` rather than a long-lived shared cache policy.
 - Traversal-like asset keys and missing backing files are rejected.
 - Refresh/read-back and server restart preserve book text, style, characters, prompts, and asset records.
 - Frontend running, failed, stale, partial-success, completed, private-asset, compact-source, missing-media-frame, one-line prompt-preview/full-dialog, bounded-media, focus-return, and no-automatic-scroll states have regression coverage.
