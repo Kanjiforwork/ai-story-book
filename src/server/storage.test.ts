@@ -138,6 +138,72 @@ describe("local SQLite bootstrap", () => {
     database.close();
   });
 
+  it("records the last completed version when a later migration is interrupted", () => {
+    const directory = fs.mkdtempSync(
+      path.join(os.tmpdir(), "gradion-book-studio-v2-resume-"),
+    );
+    temporaryDirectories.push(directory);
+    const dataDir = path.join(directory, "data");
+    fs.mkdirSync(dataDir, { recursive: true });
+
+    const legacyDatabase = new Database(path.join(dataDir, "gradion.sqlite"));
+    legacyDatabase.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      INSERT INTO schema_meta (key, value) VALUES ('schema_version', '1');
+      CREATE TABLE users (
+        id TEXT PRIMARY KEY,
+        email TEXT NOT NULL UNIQUE,
+        name TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE sessions (
+        token_hash TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        created_at TEXT NOT NULL,
+        last_seen_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT
+      );
+      CREATE TABLE projects (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        title TEXT NOT NULL,
+        book_text_key TEXT NOT NULL,
+        book_text_characters INTEGER NOT NULL,
+        gemini_file_name TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE project_steps (
+        project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        step_key TEXT NOT NULL,
+        position INTEGER NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('PENDING', 'RUNNING', 'FAILED', 'COMPLETED')),
+        error_code TEXT,
+        error_message TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, step_key),
+        UNIQUE (project_id, position)
+      );
+    `);
+    legacyDatabase.close();
+
+    expect(() => openDatabase(dataDir)).toThrow(
+      /duplicate column name: gemini_file_name/,
+    );
+
+    const database = new Database(path.join(dataDir, "gradion.sqlite"));
+    expect(
+      database
+        .prepare("SELECT value FROM schema_meta WHERE key = ?")
+        .get("schema_version"),
+    ).toEqual({ value: "2" });
+    database.close();
+  });
+
   it("upgrades the M3 schema version with the M4 chapters table", () => {
     const directory = fs.mkdtempSync(
       path.join(os.tmpdir(), "gradion-book-studio-m4-migration-"),

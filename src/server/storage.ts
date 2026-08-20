@@ -105,7 +105,7 @@ export function openDatabase(dataDir?: string): Database.Database {
 
       database
         .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
-        .run(String(CURRENT_SCHEMA_VERSION), "schema_version");
+        .run("2", "schema_version");
     });
 
     migrateToVersionTwo();
@@ -172,7 +172,7 @@ export function openDatabase(dataDir?: string): Database.Database {
 
       database
         .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
-        .run(String(CURRENT_SCHEMA_VERSION), "schema_version");
+        .run("3", "schema_version");
     });
 
     migrateToVersionThree();
@@ -213,7 +213,7 @@ export function openDatabase(dataDir?: string): Database.Database {
 
       database
         .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
-        .run(String(CURRENT_SCHEMA_VERSION), "schema_version");
+        .run("4", "schema_version");
     });
 
     migrateToVersionFour();
@@ -251,7 +251,7 @@ export function openDatabase(dataDir?: string): Database.Database {
 
       database
         .prepare("UPDATE schema_meta SET value = ? WHERE key = ?")
-        .run(String(CURRENT_SCHEMA_VERSION), "schema_version");
+        .run("5", "schema_version");
     });
 
     migrateToVersionFive();
