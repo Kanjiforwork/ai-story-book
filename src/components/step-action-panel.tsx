@@ -1,5 +1,6 @@
 import type { PipelineStep } from "@/domain/pipeline";
 import type { ProjectStepView } from "@/domain/project";
+import { GenerationStatusFrame } from "@/components/generation-status-frame";
 import { useEffect, useState } from "react";
 
 const STEP_DESCRIPTIONS: Record<PipelineStep, string> = {
@@ -8,6 +9,14 @@ const STEP_DESCRIPTIONS: Record<PipelineStep, string> = {
   PORTRAITS: "Create a portrait for each character.",
   CHAPTERS: "Write one scene prompt.",
   ILLUSTRATIONS: "Create the chapter scene.",
+};
+
+const READY_COPY: Record<PipelineStep, string> = {
+  STYLE: "Ready to generate an art style.",
+  CHARACTERS: "Ready to find the adult characters.",
+  PORTRAITS: "Ready to generate character portraits.",
+  CHAPTERS: "Ready to write a chapter prompt.",
+  ILLUSTRATIONS: "Ready to generate the chapter illustration.",
 };
 
 const RUNNING_COPY: Record<PipelineStep, string> = {
@@ -80,40 +89,96 @@ export function StepActionPanel({
 
   if (!currentStep) {
     return (
-      <section className="rounded-3xl border border-ink/10 bg-surface p-6 shadow-[0_10px_35px_rgba(35,31,32,0.06)] sm:p-8">
-        <div className="flex items-center gap-3 text-sm font-semibold text-ink">
-          <span className="flex size-8 items-center justify-center rounded-full bg-ink text-white">
-            ✓
-          </span>
-          All five steps are complete.
-        </div>
-        <p className="mt-4 text-sm leading-6 text-ink-body">
-          Results are saved and ready to revisit.
-        </p>
-      </section>
+      <GenerationStatusFrame
+        detail="Results are saved and ready to revisit."
+        eyebrow="COMPLETE"
+        message="All five steps are complete."
+        meta="Saved"
+        progress="complete"
+      />
     );
   }
 
   const { key, run } = currentStep;
 
+  if (running || stale || failed) {
+    const elapsed = formatElapsed(run.claimedAt, now);
+    const runningMeta = elapsed ? `Elapsed ${elapsed}` : "Working…";
+
+    return (
+      <GenerationStatusFrame
+        action={
+          stale
+            ? {
+                disabled: pending,
+                label: pending ? "Recovering…" : "Recover run",
+                onClick: onRecover,
+              }
+            : failed
+              ? {
+                  disabled: pending,
+                  label: pending ? "Retrying…" : `Retry ${key.toLowerCase()}`,
+                  onClick: onRun,
+                }
+              : undefined
+        }
+        detail={
+          running && itemProgress
+            ? `${itemProgress.saved} of ${itemProgress.total} ${itemProgress.label} saved`
+            : undefined
+        }
+        eyebrow={running ? "GENERATING" : stale ? "RECOVERY" : "RETRY"}
+        message={
+          running
+            ? `${RUNNING_COPY[key]}. Results save as they finish; you can leave this page.`
+            : stale
+              ? "Generation paused. Your saved work is safe."
+              : (run.errorMessage ?? "This step failed before it could finish.")
+        }
+        meta={
+          running ? runningMeta : stale ? "Ready to recover" : "Ready to retry"
+        }
+        notice={actionError}
+        progress={running ? "running" : stale ? "paused" : "failed"}
+      />
+    );
+  }
+
+  if (key !== "STYLE") {
+    return (
+      <GenerationStatusFrame
+        action={{
+          disabled: pending,
+          label: pending ? "Starting…" : `Generate ${key.toLowerCase()}`,
+          onClick: onRun,
+        }}
+        eyebrow="READY"
+        message={READY_COPY[key]}
+        meta="Waiting for action"
+        notice={actionError}
+        progress="ready"
+      />
+    );
+  }
+
   return (
     <section
       aria-labelledby="step-action-heading"
-      className="rounded-3xl border border-ink/10 bg-surface p-6 shadow-[0_10px_35px_rgba(35,31,32,0.06)] sm:p-8"
+      className="rounded-2xl border border-ink/10 bg-surface p-5 shadow-[0_8px_24px_rgba(35,31,32,0.05)] sm:p-6"
     >
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="text-xs font-bold uppercase tracking-[0.16em] text-orange">
-            Next action
+            READY
           </p>
           <h2 className="mt-2 text-2xl font-semibold" id="step-action-heading">
             {running
               ? RUNNING_COPY[key]
               : stale
-                ? `${key === "STYLE" ? "Style" : key.toLowerCase()} run needs recovery`
+                ? `${key === "STYLE" ? "Style" : String(key).toLowerCase()} run needs recovery`
                 : failed
-                  ? `Retry ${key.toLowerCase()}`
-                  : `Ready for ${key.toLowerCase()}`}
+                  ? `Retry ${String(key).toLowerCase()}`
+                  : "Ready for style"}
           </h2>
         </div>
         {run.attempt > 1 ? (
@@ -123,111 +188,51 @@ export function StepActionPanel({
         ) : null}
       </div>
 
-      {running ? (
-        <div
-          aria-live="polite"
-          className="mt-6 rounded-2xl border border-orange/25 bg-orange/10 px-4 py-4 text-sm font-semibold text-orange-deep"
-        >
-          <span aria-hidden="true" className="mr-3 inline-block animate-spin">
-            ◌
+      <p className="mt-4 max-w-2xl text-sm leading-6 text-ink-body">
+        {STEP_DESCRIPTIONS[key]}
+      </p>
+      {key === "STYLE" ? (
+        <div className="mt-6">
+          <label
+            className="mb-2 block text-sm font-semibold"
+            htmlFor="style-draft"
+          >
+            Style direction{" "}
+            <span className="font-normal text-ink-muted">(optional)</span>
+          </label>
+          <input
+            className="min-h-12 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none transition placeholder:text-ink-muted focus:border-orange focus:ring-4 focus:ring-orange/15"
+            id="style-draft"
+            maxLength={500}
+            onChange={(event) => onStyleDraftChange(event.target.value)}
+            placeholder="Leave blank to generate a style from the book"
+            value={styleDraft}
+          />
+          <p className="mt-2 text-xs text-ink-muted">
+            {styleDraft.length}/500 characters
+          </p>
+        </div>
+      ) : null}
+      <button
+        className="group mt-6 inline-flex min-h-11 items-center gap-2 rounded-lg px-2 text-sm font-bold text-orange-deep transition hover:bg-orange/10 hover:text-orange focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/15 disabled:cursor-wait disabled:opacity-60"
+        disabled={pending}
+        onClick={onRun}
+        type="button"
+      >
+        {pending
+          ? "Starting…"
+          : key === "STYLE" && styleDraft.trim()
+            ? "Use this style"
+            : "Generate style"}
+        {!pending ? (
+          <span
+            aria-hidden="true"
+            className="text-lg font-normal leading-none transition-transform group-hover:translate-x-0.5"
+          >
+            →
           </span>
-          {RUNNING_COPY[key]}. Results save as they finish; you can leave this
-          page.
-          <div className="mt-4">
-            <div
-              aria-label={`Progress while ${RUNNING_COPY[key].toLowerCase()}`}
-              className="generation-progress-track"
-              role="progressbar"
-            >
-              <span className="generation-progress-bar" />
-            </div>
-            <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs font-semibold text-orange-deep">
-              {formatElapsed(run.claimedAt, now) ? (
-                <span>Elapsed {formatElapsed(run.claimedAt, now)}</span>
-              ) : null}
-              {itemProgress ? (
-                <span>
-                  {itemProgress.saved} of {itemProgress.total}{" "}
-                  {itemProgress.label} saved
-                </span>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : stale ? (
-        <div
-          className="mt-6 rounded-2xl border border-orange/30 bg-orange/10 px-4 py-4 text-sm leading-6 text-orange-deep"
-          role="alert"
-        >
-          This run stopped. Recover it to continue; saved work is safe.
-          <button
-            className="mt-4 inline-flex min-h-11 items-center rounded-xl border border-orange-deep px-4 text-sm font-bold text-orange-deep transition hover:bg-orange-deep hover:text-white"
-            disabled={pending}
-            onClick={onRecover}
-            type="button"
-          >
-            {pending ? "Recovering…" : "Recover run"}
-          </button>
-        </div>
-      ) : failed ? (
-        <div
-          className="mt-6 rounded-2xl border border-orange/30 bg-orange/10 px-4 py-4 text-sm leading-6 text-orange-deep"
-          role="alert"
-        >
-          <p>
-            {run.errorMessage ?? "This step failed before it could finish."}
-          </p>
-          <button
-            className="mt-4 inline-flex min-h-11 items-center rounded-xl bg-orange px-4 text-sm font-bold text-white transition hover:bg-orange-hover"
-            disabled={pending}
-            onClick={onRun}
-            type="button"
-          >
-            {pending ? "Retrying…" : `Retry ${key.toLowerCase()}`}
-          </button>
-        </div>
-      ) : (
-        <>
-          <p className="mt-4 max-w-2xl text-sm leading-6 text-ink-body">
-            {STEP_DESCRIPTIONS[key]}
-          </p>
-          {key === "STYLE" ? (
-            <div className="mt-6">
-              <label
-                className="mb-2 block text-sm font-semibold"
-                htmlFor="style-draft"
-              >
-                Art style{" "}
-                <span className="font-normal text-ink-muted">(optional)</span>
-              </label>
-              <input
-                className="min-h-12 w-full rounded-xl border border-line bg-surface px-4 text-base text-ink outline-none transition placeholder:text-ink-muted focus:border-orange focus:ring-4 focus:ring-orange/15"
-                id="style-draft"
-                maxLength={500}
-                onChange={(event) => onStyleDraftChange(event.target.value)}
-                placeholder="Leave blank and Gemini will choose from the book"
-                value={styleDraft}
-              />
-              <p className="mt-2 text-xs text-ink-muted">
-                {styleDraft.length}/500 characters
-              </p>
-            </div>
-          ) : null}
-          <button
-            className="mt-6 inline-flex min-h-12 items-center rounded-xl bg-orange px-5 text-sm font-bold text-white transition hover:-translate-y-0.5 hover:bg-orange-hover disabled:cursor-wait disabled:opacity-60"
-            disabled={pending}
-            onClick={onRun}
-            type="button"
-          >
-            {pending ? "Starting…" : `Generate ${key.toLowerCase()}`}
-            {!pending ? (
-              <span aria-hidden="true" className="ml-2">
-                →
-              </span>
-            ) : null}
-          </button>
-        </>
-      )}
+        ) : null}
+      </button>
 
       {actionError ? (
         <p

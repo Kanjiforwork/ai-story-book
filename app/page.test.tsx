@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { SignOutButton } from "@/components/sign-out-button";
 import { IdentityForm } from "@/components/identity-form";
 import { ChapterList } from "@/components/chapter-list";
+import { GenerationStatusFrame } from "@/components/generation-status-frame";
 import { ProjectDetail } from "@/components/project-detail";
 import { CharacterGrid } from "@/components/character-grid";
 import type { GenerationRunView, ProjectDetailView } from "@/domain/project";
@@ -553,9 +554,7 @@ describe("foundation app shell", () => {
       <ProjectDetail project={runningProject} user={user} />,
     );
     expect(
-      screen.getByRole("heading", {
-        name: /reading the book and defining an art style/i,
-      }),
+      screen.getByText(/reading the book and defining an art style/i),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/results save as they finish/i),
@@ -580,8 +579,73 @@ describe("foundation app shell", () => {
       screen.getByRole("button", { name: "Recover run" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("alert")).toHaveTextContent(
-      /recover it to continue; saved work is safe/i,
+      /generation paused\. your saved work is safe/i,
     );
+  });
+
+  it("keeps the status frame structure consistent across recovery and completion", () => {
+    const recover = vi.fn();
+    const retry = vi.fn();
+
+    const { rerender } = render(
+      <GenerationStatusFrame
+        action={{ label: "Recover run", onClick: recover }}
+        eyebrow="RECOVERY"
+        message="Generation paused. Your saved work is safe."
+        meta="Ready to recover"
+        progress="paused"
+      />,
+    );
+
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Recover run" }),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Recover run" }));
+    expect(recover).toHaveBeenCalledOnce();
+
+    rerender(
+      <GenerationStatusFrame
+        action={{ label: "Retry portraits", onClick: retry }}
+        eyebrow="RETRY"
+        message="The image model timed out before this step finished."
+        meta="Ready to retry"
+        progress="failed"
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: "Retry portraits" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+
+    rerender(
+      <GenerationStatusFrame
+        detail="1 of 2 portraits saved"
+        eyebrow="GENERATING"
+        message="Finding adult characters and writing portrait prompts."
+        meta="Elapsed 6s"
+        progress="running"
+      />,
+    );
+
+    expect(screen.getByRole("progressbar")).toBeInTheDocument();
+
+    rerender(
+      <GenerationStatusFrame
+        detail="Results are saved and ready to revisit."
+        eyebrow="COMPLETE"
+        message="All five steps are complete."
+        meta="Saved"
+        progress="complete"
+      />,
+    );
+
+    expect(
+      screen.getByText("All five steps are complete."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button")).not.toBeInTheDocument();
   });
 
   it("shows a failed illustration as retryable chapter progress", () => {
