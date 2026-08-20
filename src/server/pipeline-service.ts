@@ -9,10 +9,7 @@ import {
   previousPipelineStep,
   type PipelineStep,
 } from "@/domain/pipeline";
-import {
-  normalizeGenerationPrompt,
-  normalizeOptionalStyle,
-} from "@/domain/validation";
+import { normalizeOptionalStyle } from "@/domain/validation";
 import { loadServerEnv } from "@/server/env";
 import {
   CHARACTER_RESPONSE_FORMAT,
@@ -48,7 +45,6 @@ export type StepClaim = {
   attempt: number;
   claimedAt: string;
   generationRunId: string;
-  isCompletedItemRetry?: boolean;
   projectId: string;
   runId: string;
   step: PipelineStep;
@@ -131,8 +127,6 @@ function selectPortraitItems(
   database: Database.Database,
   projectId: string,
   generationRunId: string,
-  characterId?: string,
-  allowCompletedItemRetry = false,
 ): PortraitSelectionRow[] {
   const rows = database
     .prepare(
@@ -162,21 +156,7 @@ function selectPortraitItems(
     );
   }
 
-  const selected = characterId
-    ? rows.filter((row) => row.id === characterId)
-    : rows.filter((row) => row.portrait_status !== "COMPLETED");
-  if (characterId && selected.length === 0) {
-    throw new PipelineStateError("NOT_FOUND", "Character not found.");
-  }
-  if (
-    !allowCompletedItemRetry &&
-    selected.some((row) => row.portrait_status === "COMPLETED")
-  ) {
-    throw new PipelineStateError(
-      "STEP_ALREADY_COMPLETED",
-      "This portrait is already complete.",
-    );
-  }
+  const selected = rows.filter((row) => row.portrait_status !== "COMPLETED");
   if (selected.some((row) => row.portrait_status === "RUNNING")) {
     throw new PipelineStateError(
       "RUN_ALREADY_ACTIVE",
@@ -196,8 +176,6 @@ function selectIllustrationItems(
   database: Database.Database,
   projectId: string,
   generationRunId: string,
-  chapterId?: string,
-  allowCompletedItemRetry = false,
 ): IllustrationSelectionRow[] {
   const rows = database
     .prepare(
@@ -227,21 +205,9 @@ function selectIllustrationItems(
     );
   }
 
-  const selected = chapterId
-    ? rows.filter((row) => row.id === chapterId)
-    : rows.filter((row) => row.illustration_status !== "COMPLETED");
-  if (chapterId && selected.length === 0) {
-    throw new PipelineStateError("NOT_FOUND", "Chapter not found.");
-  }
-  if (
-    !allowCompletedItemRetry &&
-    selected.some((row) => row.illustration_status === "COMPLETED")
-  ) {
-    throw new PipelineStateError(
-      "STEP_ALREADY_COMPLETED",
-      "This illustration is already complete.",
-    );
-  }
+  const selected = rows.filter(
+    (row) => row.illustration_status !== "COMPLETED",
+  );
   if (selected.some((row) => row.illustration_status === "RUNNING")) {
     throw new PipelineStateError(
       "RUN_ALREADY_ACTIVE",
@@ -265,17 +231,9 @@ export function claimPipelineStep(
     step: PipelineStep;
     userId: string;
     staleRunMs: number;
-    portraitCharacterId?: string;
-    illustrationChapterId?: string;
-    allowCompletedItemRetry?: boolean;
-    editedPrompt?: string;
   },
 ): StepClaim {
   return database.transaction(() => {
-    const editedPrompt =
-      input.editedPrompt === undefined
-        ? undefined
-        : normalizeGenerationPrompt(input.editedPrompt);
     if (!isImplementedPipelineStep(input.step)) {
       throw new PipelineStateError(
         "STEP_NOT_AVAILABLE",
@@ -283,20 +241,7 @@ export function claimPipelineStep(
       );
     }
 
-    const imageItemRetry = Boolean(
-      input.allowCompletedItemRetry &&
-      ((input.step === "PORTRAITS" && input.portraitCharacterId) ||
-        (input.step === "ILLUSTRATIONS" && input.illustrationChapterId)),
-    );
-    if (input.allowCompletedItemRetry && !imageItemRetry) {
-      throw new PipelineStateError(
-        "STEP_NOT_AVAILABLE",
-        "Completed retries require one portrait or chapter illustration.",
-      );
-    }
-
     const generationRunId = getActiveGenerationRunId(database, {
-      allowLatestCompletedRun: imageItemRetry,
       projectId: input.projectId,
       requestedRunId: input.generationRunId,
       userId: input.userId,
@@ -312,7 +257,7 @@ export function claimPipelineStep(
       throw new PipelineStateError("NOT_FOUND", "Project step not found.");
     }
 
-    if (row.status === "COMPLETED" && !imageItemRetry) {
+    if (row.status === "COMPLETED") {
       throw new PipelineStateError(
         "STEP_ALREADY_COMPLETED",
         "This step is already complete.",
@@ -346,68 +291,14 @@ export function claimPipelineStep(
 
     const portraitItems =
       input.step === "PORTRAITS"
-        ? selectPortraitItems(
-            database,
-            input.projectId,
-            generationRunId,
-            input.portraitCharacterId,
-            imageItemRetry,
-          )
+        ? selectPortraitItems(database, input.projectId, generationRunId)
         : [];
     const illustrationItems =
       input.step === "ILLUSTRATIONS"
-        ? selectIllustrationItems(
-            database,
-            input.projectId,
-            generationRunId,
-            input.illustrationChapterId,
-            imageItemRetry,
-          )
+        ? selectIllustrationItems(database, input.projectId, generationRunId)
         : [];
 
     const now = new Date().toISOString();
-    if (editedPrompt !== undefined) {
-      const promptUpdate =
-        input.step === "PORTRAITS" && input.portraitCharacterId
-          ? database
-              .prepare(
-                `UPDATE characters
-                 SET prompt = ?, updated_at = ?
-                 WHERE project_id = ? AND generation_run_id = ? AND id = ?`,
-              )
-              .run(
-                editedPrompt,
-                now,
-                input.projectId,
-                generationRunId,
-                input.portraitCharacterId,
-              )
-          : input.step === "ILLUSTRATIONS" && input.illustrationChapterId
-            ? database
-                .prepare(
-                  `UPDATE chapters
-                   SET prompt = ?, updated_at = ?
-                   WHERE project_id = ? AND generation_run_id = ? AND id = ?`,
-                )
-                .run(
-                  editedPrompt,
-                  now,
-                  input.projectId,
-                  generationRunId,
-                  input.illustrationChapterId,
-                )
-            : null;
-      if (!promptUpdate) {
-        throw new PipelineStateError(
-          "STEP_NOT_AVAILABLE",
-          "Only portrait and illustration prompts can be edited here.",
-        );
-      }
-      if (promptUpdate.changes !== 1) {
-        throw new PipelineStateError("NOT_FOUND", "Prompt target not found.");
-      }
-    }
-
     const runId = randomUUID();
     const attempt = row.attempt_count + 1;
 
@@ -520,7 +411,6 @@ export function claimPipelineStep(
       attempt,
       claimedAt: now,
       generationRunId,
-      isCompletedItemRetry: imageItemRetry,
       projectId: input.projectId,
       runId,
       step: input.step,
@@ -1133,30 +1023,6 @@ function persistPortraitSuccess(
         );
       }
 
-      if (claim.isCompletedItemRetry) {
-        database
-          .prepare(
-            `UPDATE project_steps
-             SET status = 'PENDING', active_run_id = NULL,
-                 claimed_at = NULL, heartbeat_at = NULL,
-                 error_code = NULL, error_message = NULL, updated_at = ?
-             WHERE project_id = ? AND generation_run_id = ?
-               AND step_key = 'ILLUSTRATIONS' AND status = 'COMPLETED'`,
-          )
-          .run(now, claim.projectId, claim.generationRunId);
-        database
-          .prepare(
-            `UPDATE chapters
-             SET illustration_status = 'PENDING',
-                 illustration_active_run_id = NULL,
-                 illustration_error_code = NULL,
-                 illustration_error_message = NULL,
-                 updated_at = ?
-             WHERE project_id = ? AND generation_run_id = ?
-               AND illustration_status = 'COMPLETED'`,
-          )
-          .run(now, claim.projectId, claim.generationRunId);
-      }
       return true;
     })(),
   );
@@ -1337,7 +1203,6 @@ function persistIllustrationFailure(
 function getPortraitRunInput(
   dataDir: string,
   claim: StepClaim,
-  characterId?: string,
 ): {
   characters: Array<{ id: string; name: string; prompt: string }>;
   style: string;
@@ -1370,15 +1235,14 @@ function getPortraitRunInput(
           WHERE project_id = ? AND generation_run_id = ?
             AND portrait_active_run_id = ?
             AND portrait_status = 'RUNNING'
-            ${characterId ? "AND id = ?" : ""}
           ORDER BY position ASC
         `,
       )
-      .all(
-        ...(characterId
-          ? [claim.projectId, claim.generationRunId, claim.runId, characterId]
-          : [claim.projectId, claim.generationRunId, claim.runId]),
-      ) as Array<{ id: string; name: string; prompt: string }>;
+      .all(claim.projectId, claim.generationRunId, claim.runId) as Array<{
+      id: string;
+      name: string;
+      prompt: string;
+    }>;
     if (characters.length === 0) {
       throw new PipelineStateError(
         "STALE_RUN",
@@ -1607,11 +1471,10 @@ function getIllustrationRunInput(
 async function executePortraits(
   dataDir: string,
   claim: StepClaim,
-  characterId: string | undefined,
   adapter: GeminiImageAdapter,
   staleRunMs: number,
 ): Promise<void> {
-  const input = getPortraitRunInput(dataDir, claim, characterId);
+  const input = getPortraitRunInput(dataDir, claim);
   const results = await Promise.allSettled(
     input.characters.map(async (character) => {
       let asset: StoredImageAsset | undefined;
@@ -2172,7 +2035,6 @@ export async function executePipelineRun(input: {
   staleRunMs: number;
   adapter?: GeminiTextAdapter;
   imageAdapter?: GeminiImageAdapter;
-  portraitCharacterId?: string;
 }): Promise<void> {
   try {
     if (input.claim.step === "STYLE") {
@@ -2219,7 +2081,6 @@ export async function executePipelineRun(input: {
       await executePortraits(
         input.dataDir,
         input.claim,
-        input.portraitCharacterId,
         adapter,
         input.staleRunMs,
       );
@@ -2271,7 +2132,6 @@ export function startPipelineRun(input: {
   staleRunMs: number;
   adapter?: GeminiTextAdapter;
   imageAdapter?: GeminiImageAdapter;
-  portraitCharacterId?: string;
 }): void {
   void executePipelineRun(input);
 }

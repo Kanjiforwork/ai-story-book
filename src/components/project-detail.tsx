@@ -9,10 +9,7 @@ import {
 } from "@/domain/pipeline";
 import type { ProjectDetailView } from "@/domain/project";
 import { AppShell } from "@/components/app-shell";
-import {
-  CompletedProjectGallery,
-  type EditedPromptRetry,
-} from "@/components/completed-project-gallery";
+import { CompletedProjectGallery } from "@/components/completed-project-gallery";
 import { ProjectDetailDialog } from "@/components/project-detail-dialog";
 import type { AuthenticatedUser } from "@/server/auth";
 
@@ -166,30 +163,6 @@ export function ProjectDetail({
     }
   }
 
-  async function retryEditedPrompt(input: EditedPromptRetry) {
-    if (!project.activeGenerationRunId) {
-      throw new Error("This saved run cannot be edited.");
-    }
-
-    const resource = input.kind === "portrait" ? "portraits" : "illustrations";
-    const response = await fetch(
-      `/api/projects/${project.id}/${resource}/${input.id}/retry`,
-      {
-        body: JSON.stringify({
-          generationRunId: project.activeGenerationRunId,
-          prompt: input.prompt,
-        }),
-        headers: { "content-type": "application/json" },
-        method: "POST",
-      },
-    );
-    const payload = (await response.json()) as { message?: string };
-    if (!response.ok) {
-      throw new Error(payload.message ?? "This image could not be retried.");
-    }
-    await refreshProject();
-  }
-
   return (
     <AppShell user={user}>
       <main className="mx-auto max-w-[90rem] px-5 py-6 sm:px-8 sm:py-8">
@@ -326,10 +299,8 @@ export function ProjectDetail({
           characters={project.characters}
           createdAt={project.createdAt}
           onReadFullText={() => setSourceDialogOpen(true)}
-          onRetryPrompt={retryEditedPrompt}
           onStyleDraftChange={setStyleDraft}
           onViewFullStyle={() => setStyleDialogOpen(true)}
-          readOnly={selectedRunReadOnly}
           showStyleDirection={currentStep?.key === "STYLE"}
           style={project.style}
           styleDirectionDisabled={

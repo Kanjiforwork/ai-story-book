@@ -504,58 +504,6 @@ describe("foundation app shell", () => {
     expect(screen.queryByText("Generated results")).not.toBeInTheDocument();
   });
 
-  it("retries a failed contact-sheet item with its saved prompt", async () => {
-    const project = projectFixture();
-    project.activeGenerationRunId = "generation-1";
-    project.completedSteps = 2;
-    project.status = "IN_PROGRESS";
-    project.style = "Warm painted watercolour.";
-    project.characters = [
-      characterFixture("character-1", "Mole", "FAILED"),
-      characterFixture("character-2", "Rat"),
-    ];
-    project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
-    project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
-    project.steps[2] = {
-      ...project.steps[2],
-      run: {
-        ...project.steps[2].run,
-        attempt: 1,
-        errorCode: "GEMINI_FAILED",
-        errorMessage: "Mole failed.",
-      },
-      status: "FAILED",
-    };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        json: async () => ({ run: { id: "retry-1", status: "RUNNING" } }),
-        ok: true,
-      })
-      .mockResolvedValueOnce({
-        json: async () => ({ project }),
-        ok: true,
-      });
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(<ProjectDetail project={project} user={user} />);
-
-    fireEvent.click(screen.getByText("Mole").closest("button")!);
-    fireEvent.click(screen.getByRole("button", { name: "Retry" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[0]).toEqual([
-      "/api/projects/project-1/portraits/character-1/retry",
-      expect.objectContaining({
-        body: JSON.stringify({
-          generationRunId: "generation-1",
-          prompt: "An adult mole portrait prompt.",
-        }),
-        method: "POST",
-      }),
-    ]);
-  });
-
   it("keeps generation history out of the project workspace", () => {
     const project = projectFixture();
     project.generationRuns = [
@@ -1009,7 +957,7 @@ describe("foundation app shell", () => {
     ).toBeInTheDocument();
   });
 
-  it("keeps the completed state compact and retries an edited image prompt", async () => {
+  it("keeps the completed state compact and exposes saved prompts", () => {
     const project = projectFixture();
     project.activeGenerationRunId = "generation-1";
     project.completedSteps = 5;
@@ -1074,21 +1022,7 @@ describe("foundation app shell", () => {
         },
       },
     ];
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({
-        json: async () => ({ run: { id: "retry-1", status: "RUNNING" } }),
-        ok: true,
-      })
-      .mockResolvedValueOnce({
-        json: async () => ({ project }),
-        ok: true,
-      });
-    vi.stubGlobal("fetch", fetchMock);
-
-    const { rerender } = render(
-      <ProjectDetail project={project} user={user} />,
-    );
+    render(<ProjectDetail project={project} user={user} />);
 
     expect(
       screen.getByRole("region", { name: "Completed project results" }),
@@ -1100,12 +1034,19 @@ describe("foundation app shell", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByAltText("Illustration for Chapter 1").closest("button"),
+    ).toHaveAttribute("aria-label", "Read prompt for Chapter 1");
+    expect(
+      screen.getByAltText("Illustration for Chapter 1").closest("article"),
     ).toHaveClass("lg:col-start-4");
     expect(
       screen
         .getByAltText("Illustration for Chapter 1")
         .closest("span.relative"),
-    ).toHaveClass("aspect-square");
+    ).toHaveClass(
+      "h-[28rem]",
+      "md:h-[32rem]",
+      "lg:h-[clamp(24rem,36vw,32rem)]",
+    );
     expect(screen.getAllByText("Read full prompt →")).toHaveLength(3);
     expect(screen.getByText("Done")).toHaveClass("bg-orange", "text-white");
     expect(
@@ -1125,54 +1066,19 @@ describe("foundation app shell", () => {
     expect(screen.queryByText("Saved style")).not.toBeInTheDocument();
     expect(screen.queryByText("Book text preview")).not.toBeInTheDocument();
     expect(screen.queryByText("Full book text")).not.toBeInTheDocument();
-
-    const retryingProject = {
-      ...project,
-      characters: project.characters.map((character, index) =>
-        index === 0
-          ? {
-              ...character,
-              portrait: {
-                ...character.portrait,
-                status: "RUNNING" as const,
-              },
-            }
-          : character,
-      ),
-    };
-    rerender(
-      <ProjectDetail key="retrying" project={retryingProject} user={user} />,
-    );
-    expect(screen.queryByAltText("Portrait of Mole")).not.toBeInTheDocument();
-    expect(screen.getByRole("status")).toHaveTextContent(
-      "Generating portrait for Mole…",
-    );
-    expect(screen.getByAltText("Portrait of Rat")).toBeInTheDocument();
-    rerender(<ProjectDetail key="complete" project={project} user={user} />);
+    expect(screen.queryByText("Needs update")).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Regenerate" }),
+    ).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: /Portrait of Mole/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Edit prompt" }));
-    const prompt = screen.getByLabelText("Edit prompt");
-    fireEvent.change(prompt, {
-      target: {
-        value:
-          "An adult mole in a classic watercolor portrait with a red scarf.",
-      },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Save & retry" }));
-
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-    expect(fetchMock.mock.calls[0]).toEqual([
-      "/api/projects/project-1/portraits/character-1/retry",
-      expect.objectContaining({
-        body: JSON.stringify({
-          generationRunId: "generation-1",
-          prompt:
-            "An adult mole in a classic watercolor portrait with a red scarf.",
-        }),
-        method: "POST",
-      }),
-    ]);
+    expect(
+      screen.getByRole("dialog", { name: "Mole portrait prompt" }),
+    ).toHaveTextContent("An adult mole in a classic watercolor portrait.");
+    expect(
+      screen.queryByRole("button", { name: "Edit prompt" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close dialog" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

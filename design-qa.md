@@ -11,9 +11,8 @@ are intentionally not presented as reviewer evidence.
 - Desktop completed contact sheet keeps a compact shell, serif project title, five-step progress, and a four-card reading order: metadata, two portraits, then the wide chapter image.
 - From the Characters step onward, pending, running, failed, and completed image items stay in that same contact-sheet layout; the next-step action replaces the header status pill, while running uses a compact spinner in that button.
 - The 0-of-5 state now uses the same contact sheet too: `Generate style` is the header action, the optional style direction lives inside the first context card, and no legacy ready/status card is mounted.
-- Every generated image exposes `Read full prompt`, and current prompts open in a bounded modal.
-- Current-run prompts can enter edit mode; unchanged or blank prompts cannot retry; changed prompts expose `Save & retry`.
-- While an edited prompt is regenerating, the image frame becomes a clean white loading state with the demo's orange-ring spinner and a specific per-item caption. The previous asset remains persisted for failure recovery but is not shown while the request is running.
+- Every generated image exposes `Read full prompt`, and saved prompts open read-only in a bounded modal.
+- Failed or stale steps retry from the header action. For partial image failures, completed items remain visible and the retry runs only unfinished items.
 - Chapter illustrations use a square API output and a square UI frame; the generation prompt keeps important subjects inside a central safe area instead of relying on `object-cover` to crop a landscape image.
 - Attempt history is a modal with a bounded internal list rather than a page-length expansion.
 - Real project content differs from the reference title and watercolor assets by design; layout, hierarchy, density, and interactions are the comparison targets.
@@ -24,4 +23,4 @@ are intentionally not presented as reviewer evidence.
 
 ## Result
 
-Passed for the selected workspace layout and edited-prompt retry flow. No production build was rerun because the user explicitly requested the dev server workflow.
+Passed for the selected workspace layout and failure-retry flow. No production build was rerun because the user explicitly requested the dev server workflow.
