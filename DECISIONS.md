@@ -2,9 +2,11 @@
 
 These are six decisions I actually made while building the app. In the first four, I pushed back on Codex. In the last two, Codex caught things I had missed.
 
+I tested the real flow with `gemini-3.6-flash` for text and `gemini-3.1-flash-image` for images. Both stay configurable through environment variables because model IDs can change.
+
 ## 1. SQLite instead of JSON
 
-Codex suggested JSON because this is a small local app. I did not think it was enough. Two tabs can update the same project, and I need to lock a step before calling Gemini. I used SQLite for the app state and kept the book text and images as normal files. It adds a schema and one dependency, but the state is much safer to update.
+Codex suggested JSON because this is a small local app. I did not think it was enough. Two tabs can update the same project, and I need to lock a step before calling Gemini. I used SQLite for the app state and kept the book text and images as normal files. The claim is saved before the Gemini call, so a refresh or second tab sees the running step instead of starting another call. It adds a schema and one dependency, but the state is much safer to update.
 
 ## 2. More than one status
 
