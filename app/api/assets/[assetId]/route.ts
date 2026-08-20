@@ -39,7 +39,7 @@ export async function GET(
     const bytes = fs.readFileSync(result.asset.filePath);
     return new NextResponse(bytes, {
       headers: {
-        "cache-control": "private, max-age=31536000, immutable",
+        "cache-control": "private, no-store",
         "content-length": String(bytes.byteLength),
         "content-type": result.asset.mimeType,
       },
