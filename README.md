@@ -74,6 +74,10 @@ The source book is uploaded to Gemini lazily on the first text-generation call a
 
 The server enforces the assessment limits of at most two adult characters and one chapter, checks project ownership on project and asset operations, and rejects unsafe asset paths or missing backing files.
 
+## Optional assessment bonuses
+
+The New Project form includes two bundled public-domain sample books, resolved from a server-side allowlist without a runtime download. The curated text starts at each book's first chapter, excluding Gutenberg boilerplate, title pages, prefaces, and contents. Each project shows its own persisted pipeline attempts, while the authenticated `Attempts` page lists attempts across the user's projects with links back to the owning project.
+
 ## Testing and limitations
 
 The suite covers domain transitions, server routes/services, mocked Gemini output, duplicate claims, stale recovery, malformed output, partial image success, ownership, path safety, restart persistence, and representative frontend states. See [TESTING.md](TESTING.md) for the actual verification report.

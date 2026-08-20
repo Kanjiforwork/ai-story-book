@@ -2,9 +2,9 @@
 
 ## Strategy
 
-Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions and upgrades, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, expired-source reupload, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
+Backend tests exercise the pipeline as a state machine: ordered step claims, persisted generation-run IDs, ownership checks, SQLite transitions and upgrades, mocked Gemini adapters, local asset storage, and recovery after failures or stale heartbeats. The generation-run tests also cover exact direct styles, lazy source upload/reuse, expired-source reupload, fresh interaction roots, isolated outputs, previous-run selection, and cross-project isolation. Sample-book tests cover allowlisted server loading, removal of Gutenberg boilerplate and pre-story front matter, input caps, invalid IDs, and ambiguous sources. Attempt-history tests cover project filtering, newest-first ordering, and user ownership. Tests deliberately inspect both the database view and the returned project view so a successful response cannot hide a missing persisted result.
 
-Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, hidden generation-history controls, neutral saved-output rendering, code-native missing-media frames, one-line prompt previews with full source/style and prompt dialogs, running and stale copy, retry affordances, private non-cacheable asset responses, item progress, compact completion, bounded media, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, visible focus treatment, and the absence of history copy.
+Frontend tests exercise the project page with mocked API responses. They cover ordered action availability, project-scoped attempt history, the global attempt-to-project link, hidden generation-run controls, sample-book submission, neutral saved-output rendering, code-native missing-media frames, one-line prompt previews with full source/style and prompt dialogs, running and stale copy, retry affordances, private non-cacheable asset responses, item progress, compact completion, bounded media, Escape/focus return, the no-scroll contract, and the polling race where an older response must not overwrite newer state. The responsive/accessibility pass also used the local production server at 375px, 768px, 1024px, and 1440px to check overflow, labels, real controls, visible focus treatment, and the absence of generation-run copy. The revised project and global Attempts surfaces were rechecked in an isolated production fixture at effective 433px and 1600px widths: both matched their viewport width without horizontal overflow, navigation remained visible, project links resolved correctly, and the sample preview began at `STAVE I` rather than front matter.
 
 ## Manual real-Gemini smoke
 
@@ -18,7 +18,7 @@ Commands were run sequentially from `/Users/bao/GitHub/ai-story-book`.
 
 ```text
 Test Files  15 passed (15)
-Tests       74 passed (74)
+Tests       80 passed (80)
 ```
 
 ### `npm run check`
@@ -78,6 +78,8 @@ Covered by automated tests unless marked otherwise:
 - Chapter and illustration retries preserve upstream style, character, portrait, and chapter results.
 - Malformed or empty Gemini output fails the step with an actionable persisted error.
 - An expired stored Gemini file is uploaded again before a fresh interaction root; transient lookup errors do not trigger a hidden retry.
+- Public-domain samples resolve through an allowlist and begin at the first chapter; unknown IDs and conflicting source inputs are rejected.
+- Project history reads every owned persisted attempt, and the global Attempts page remains scoped to the authenticated user's projects.
 - Server-side caps reject more than two adult characters or one chapter.
 - Project and asset ownership are checked server-side.
 - Successful private asset responses use `private, no-store` rather than a long-lived shared cache policy.

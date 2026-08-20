@@ -419,6 +419,13 @@ Stop feature work and polish the core flow when all five steps, persistence, dup
 - `README.md`, `TESTING.md`, `DECISIONS.md`, `.env.example`, and Git history are honest and complete.
 - Intentionally out-of-scope work and local runner limitations are documented.
 
+## 14. Approved optional bonus slice
+
+- Offer two bundled, allowlisted public-domain books on the New Project form; the server resolves the selected ID and the existing project-creation path remains authoritative.
+- Expose persisted `pipeline_runs` as project-scoped attempt history, plus an authenticated `Attempts` navigation page that lists all owned attempts and links back to each project.
+- Do not add a schema migration, runtime book download, generation-run management UI, higher content caps, or another Gemini step.
+- Verify both bonuses with focused backend/frontend tests, then run the existing full quality gates.
+
 ## References
 
 - Official local assessment: [`docs/reference/gradion-assessment.md`](reference/gradion-assessment.md)
