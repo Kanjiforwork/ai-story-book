@@ -48,6 +48,7 @@ export type StepClaim = {
   attempt: number;
   claimedAt: string;
   generationRunId: string;
+  isCompletedItemRetry?: boolean;
   projectId: string;
   runId: string;
   step: PipelineStep;
@@ -519,6 +520,7 @@ export function claimPipelineStep(
       attempt,
       claimedAt: now,
       generationRunId,
+      isCompletedItemRetry: imageItemRetry,
       projectId: input.projectId,
       runId,
       step: input.step,
@@ -1129,6 +1131,31 @@ function persistPortraitSuccess(
           "STALE_RUN",
           "This portrait run is no longer active.",
         );
+      }
+
+      if (claim.isCompletedItemRetry) {
+        database
+          .prepare(
+            `UPDATE project_steps
+             SET status = 'PENDING', active_run_id = NULL,
+                 claimed_at = NULL, heartbeat_at = NULL,
+                 error_code = NULL, error_message = NULL, updated_at = ?
+             WHERE project_id = ? AND generation_run_id = ?
+               AND step_key = 'ILLUSTRATIONS' AND status = 'COMPLETED'`,
+          )
+          .run(now, claim.projectId, claim.generationRunId);
+        database
+          .prepare(
+            `UPDATE chapters
+             SET illustration_status = 'PENDING',
+                 illustration_active_run_id = NULL,
+                 illustration_error_code = NULL,
+                 illustration_error_message = NULL,
+                 updated_at = ?
+             WHERE project_id = ? AND generation_run_id = ?
+               AND illustration_status = 'COMPLETED'`,
+          )
+          .run(now, claim.projectId, claim.generationRunId);
       }
       return true;
     })(),

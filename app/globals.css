@@ -122,6 +122,6 @@ a:focus-visible {
   }
 
   .image-generation-spinner {
-    animation: gradion-spin 900ms linear infinite !important;
+    animation: none !important;
   }
 }

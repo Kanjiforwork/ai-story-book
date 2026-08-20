@@ -646,6 +646,157 @@ describe("mocked text pipeline", () => {
 });
 
 describe("mocked portrait pipeline", () => {
+  it("reopens only Illustrations after one completed portrait is replaced", async () => {
+    const { dataDir, database, project, user } = createFixture();
+    const generationRunId = project.activeGenerationRunId as string;
+    const now = new Date().toISOString();
+    database
+      .prepare(
+        "UPDATE project_steps SET status = 'COMPLETED' WHERE project_id = ? AND generation_run_id = ?",
+      )
+      .run(project.id, generationRunId);
+    database
+      .prepare(
+        "UPDATE generation_runs SET status = 'COMPLETED', style_text = ?, completed_at = ? WHERE id = ?",
+      )
+      .run("Warm painted watercolour.", now, generationRunId);
+
+    const insertAsset = database.prepare(
+      `INSERT INTO assets
+        (id, project_id, generation_run_id, kind, storage_key, mime_type, byte_size, checksum, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, 'image/png', 4, ?, ?, ?)`,
+    );
+    insertAsset.run(
+      "portrait-mole-old",
+      project.id,
+      generationRunId,
+      "PORTRAIT",
+      "assets/portrait-mole-old.png",
+      "mole-old",
+      now,
+      now,
+    );
+    insertAsset.run(
+      "portrait-rat-old",
+      project.id,
+      generationRunId,
+      "PORTRAIT",
+      "assets/portrait-rat-old.png",
+      "rat-old",
+      now,
+      now,
+    );
+    insertAsset.run(
+      "illustration-old",
+      project.id,
+      generationRunId,
+      "ILLUSTRATION",
+      "assets/illustration-old.png",
+      "illustration-old",
+      now,
+      now,
+    );
+    const insertCharacter = database.prepare(
+      `INSERT INTO characters
+        (id, project_id, generation_run_id, position, name, prompt,
+         portrait_status, portrait_asset_id, created_at, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, 'COMPLETED', ?, ?, ?)`,
+    );
+    insertCharacter.run(
+      "character-mole",
+      project.id,
+      generationRunId,
+      0,
+      "Mole",
+      detailedPrompt,
+      "portrait-mole-old",
+      now,
+      now,
+    );
+    insertCharacter.run(
+      "character-rat",
+      project.id,
+      generationRunId,
+      1,
+      "Rat",
+      `${detailedPrompt} A blue coat.`,
+      "portrait-rat-old",
+      now,
+      now,
+    );
+    database
+      .prepare(
+        `INSERT INTO chapters
+          (id, project_id, generation_run_id, position, name, prompt,
+           illustration_status, illustration_asset_id, created_at, updated_at)
+         VALUES (?, ?, ?, 0, 'The River', 'A riverside scene.', 'COMPLETED', ?, ?, ?)`,
+      )
+      .run(
+        "chapter-1",
+        project.id,
+        generationRunId,
+        "illustration-old",
+        now,
+        now,
+      );
+
+    const claim = claimPipelineStep(database, {
+      allowCompletedItemRetry: true,
+      editedPrompt: `${detailedPrompt} A bright red scarf.`,
+      portraitCharacterId: "character-mole",
+      projectId: project.id,
+      staleRunMs: 120_000,
+      step: "PORTRAITS",
+      userId: user.id,
+    });
+    database.close();
+
+    await executePipelineRun({
+      claim,
+      dataDir,
+      imageAdapter: {
+        modelId: "gemini-3-pro-image-preview",
+        generatePortrait: async () => ({
+          bytes: Buffer.from("mole-new"),
+          mimeType: "image/png",
+        }),
+        generateIllustration: async () => ({
+          bytes: Buffer.from("unused"),
+          mimeType: "image/png",
+        }),
+      },
+      portraitCharacterId: "character-mole",
+      staleRunMs: 120_000,
+    });
+
+    const finalDatabase = openDatabase(dataDir);
+    const detail = getProjectDetail(
+      finalDatabase,
+      user.id,
+      project.id,
+      dataDir,
+    );
+    expect(detail?.status).toBe("IN_PROGRESS");
+    expect(detail?.steps.map((step) => step.status)).toEqual([
+      "COMPLETED",
+      "COMPLETED",
+      "COMPLETED",
+      "COMPLETED",
+      "PENDING",
+    ]);
+    expect(detail?.characters[0].portrait.assetId).not.toBe(
+      "portrait-mole-old",
+    );
+    expect(detail?.characters[1].portrait.assetId).toBe("portrait-rat-old");
+    expect(detail?.chapters[0].illustration).toEqual(
+      expect.objectContaining({
+        assetId: "illustration-old",
+        status: "PENDING",
+      }),
+    );
+    finalDatabase.close();
+  });
+
   it("keeps the previous portrait when an edited-prompt retry fails", async () => {
     const fixture = createFixture();
     await completeTextPipeline(fixture);

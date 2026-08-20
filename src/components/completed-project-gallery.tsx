@@ -235,7 +235,7 @@ export function CompletedProjectGallery({
           </div>
         </aside>
 
-        {characters.map((character, index) => (
+        {characters.map((character) => (
           <button
             aria-busy={character.portrait.status === "RUNNING"}
             className="group block min-w-0 text-left outline-none"
@@ -261,7 +261,7 @@ export function CompletedProjectGallery({
                   alt={`Portrait of ${character.name}`}
                   className="object-cover transition duration-500 group-hover:scale-[1.01]"
                   fill
-                  loading={index === 0 ? "eager" : "lazy"}
+                  loading="eager"
                   sizes="(min-width: 1024px) 18vw, (min-width: 768px) 50vw, 100vw"
                   src={character.portrait.assetUrl}
                   unoptimized
@@ -314,6 +314,7 @@ export function CompletedProjectGallery({
                   alt={`Illustration for ${chapter.name}`}
                   className="object-cover transition duration-500 group-hover:scale-[1.01]"
                   fill
+                  loading="eager"
                   sizes="(min-width: 1024px) 36vw, 100vw"
                   src={chapter.illustration.assetUrl}
                   unoptimized
@@ -328,6 +329,11 @@ export function CompletedProjectGallery({
               {chapter.illustration.status === "FAILED" ? (
                 <span className="absolute right-3 top-3 rounded-full bg-orange-deep px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-white shadow-sm">
                   Failed
+                </span>
+              ) : chapter.illustration.status === "PENDING" &&
+                chapter.illustration.assetUrl ? (
+                <span className="absolute right-3 top-3 rounded-full bg-paper px-3 py-1.5 text-[10px] font-bold uppercase tracking-[0.08em] text-orange-deep shadow-sm">
+                  Needs update
                 </span>
               ) : null}
             </span>

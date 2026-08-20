@@ -24,6 +24,35 @@ function formatDate(value: string): string {
   });
 }
 
+const RUNNING_STEP_COPY = {
+  STYLE: "Generating style…",
+  CHARACTERS: "Generating characters…",
+  PORTRAITS: "Generating portraits…",
+  CHAPTERS: "Generating chapter…",
+  ILLUSTRATIONS: "Generating illustration…",
+} as const;
+
+function formatElapsed(startedAt: string | null, now: number): string | null {
+  if (!startedAt) return null;
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((now - new Date(startedAt).getTime()) / 1_000),
+  );
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  return minutes > 0
+    ? `${minutes}m ${String(seconds).padStart(2, "0")}s`
+    : `${seconds}s`;
+}
+
+function stepStatusLabel(status: string, isStale: boolean): string {
+  if (status === "COMPLETED") return "complete";
+  if (status === "RUNNING" && isStale) return "interrupted";
+  if (status === "RUNNING") return "running";
+  if (status === "FAILED") return "needs attention";
+  return "pending";
+}
+
 export function ProjectDetail({
   project: initialProject,
   user,
@@ -39,6 +68,7 @@ export function ProjectDetail({
   const [actionError, setActionError] = useState<string | null>(null);
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   const [styleDialogOpen, setStyleDialogOpen] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const latestRefreshId = useRef(0);
   const implementedSteps = project.steps.filter((step) =>
     isImplementedPipelineStep(step.key),
@@ -57,6 +87,27 @@ export function ProjectDetail({
       step.status === "RUNNING" &&
       !step.run.isStale,
   );
+  const elapsed = currentStepIsRunning
+    ? formatElapsed(currentStep.run.claimedAt, now)
+    : null;
+  const itemProgress =
+    currentStep?.key === "PORTRAITS"
+      ? {
+          label: "portraits saved",
+          saved: project.characters.filter(
+            (character) => character.portrait.status === "COMPLETED",
+          ).length,
+          total: project.characters.length,
+        }
+      : currentStep?.key === "ILLUSTRATIONS"
+        ? {
+            label: "illustrations saved",
+            saved: project.chapters.filter(
+              (chapter) => chapter.illustration.status === "COMPLETED",
+            ).length,
+            total: project.chapters.length,
+          }
+        : null;
 
   async function refreshProject() {
     const refreshId = latestRefreshId.current + 1;
@@ -89,6 +140,14 @@ export function ProjectDetail({
     // The server view controls whether polling continues.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, shouldPoll]);
+
+  useEffect(() => {
+    if (!currentStepIsRunning || !currentStep.run.claimedAt) return;
+    const updateNow = () => setNow(Date.now());
+    updateNow();
+    const interval = window.setInterval(updateNow, 1_000);
+    return () => window.clearInterval(interval);
+  }, [currentStep?.run.claimedAt, currentStepIsRunning]);
 
   async function runCurrentStep() {
     if (!currentStep) return;
@@ -196,30 +255,56 @@ export function ProjectDetail({
             </p>
           </div>
           {!selectedRunReadOnly && currentStep ? (
-            <button
-              className="mt-1 inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-full bg-orange px-5 text-xs font-bold text-white shadow-[0_2px_6px_rgba(255,107,0,0.18)] transition hover:bg-orange-hover focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/20 disabled:cursor-wait disabled:opacity-70"
-              disabled={currentStepIsRunning || pendingAction !== null}
-              onClick={currentStepIsStale ? recoverCurrentStep : runCurrentStep}
-              type="button"
-            >
-              {currentStepIsRunning || pendingAction !== null ? (
-                <>
-                  <span
-                    aria-hidden="true"
-                    className="size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none"
-                  />
-                  <span aria-live="polite">
-                    {currentStepIsRunning ? "Generating…" : "Starting…"}
-                  </span>
-                </>
-              ) : currentStepIsStale ? (
-                "Recover run"
-              ) : currentStep.status === "FAILED" ? (
-                `Retry ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
-              ) : (
-                `Generate ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
-              )}
-            </button>
+            <div className="mt-1 shrink-0 text-right">
+              <button
+                className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-orange px-5 text-xs font-bold text-white shadow-[0_2px_6px_rgba(255,107,0,0.18)] transition hover:bg-orange-hover focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/20 disabled:cursor-wait disabled:opacity-70"
+                disabled={currentStepIsRunning || pendingAction !== null}
+                onClick={
+                  currentStepIsStale ? recoverCurrentStep : runCurrentStep
+                }
+                type="button"
+              >
+                {currentStepIsRunning || pendingAction !== null ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="size-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white motion-reduce:animate-none"
+                    />
+                    <span aria-live="polite">
+                      {currentStepIsRunning
+                        ? RUNNING_STEP_COPY[currentStep.key]
+                        : "Starting…"}
+                    </span>
+                  </>
+                ) : currentStepIsStale ? (
+                  "Recover run"
+                ) : currentStep.status === "FAILED" ? (
+                  `Retry ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
+                ) : (
+                  `Generate ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
+                )}
+              </button>
+              {currentStepIsRunning ? (
+                <div
+                  aria-live="polite"
+                  className="mt-2 min-w-44 text-[11px] tabular-nums text-ink-muted"
+                >
+                  <p>
+                    {elapsed ? `Elapsed ${elapsed}` : "Working…"}
+                    {itemProgress
+                      ? ` · ${itemProgress.saved} of ${itemProgress.total} ${itemProgress.label}`
+                      : ""}
+                  </p>
+                  <div
+                    aria-label={`${PIPELINE_STEP_LABELS[currentStep.key]} generation in progress`}
+                    className="generation-progress-track mt-2 h-0.5"
+                    role="progressbar"
+                  >
+                    <span className="generation-progress-bar" />
+                  </div>
+                </div>
+              ) : null}
+            </div>
           ) : (
             <span
               className={`mt-1 shrink-0 rounded-full px-5 py-2 text-xs font-bold ${project.status === "DONE" ? "bg-orange text-white" : "bg-paper text-ink-body"}`}
@@ -245,6 +330,7 @@ export function ProjectDetail({
               >
                 <div className="flex min-w-0 items-center gap-2">
                   <span
+                    aria-hidden="true"
                     className={`flex size-6 shrink-0 items-center justify-center rounded-full text-[10px] font-bold ${
                       step.status === "COMPLETED"
                         ? "bg-orange text-white"
@@ -258,20 +344,14 @@ export function ProjectDetail({
                     {step.status === "COMPLETED" ? "✓" : step.position + 1}
                   </span>
                   <span
+                    aria-hidden="true"
                     className={`font-editorial hidden min-w-0 truncate text-sm md:inline ${currentStep?.key === step.key ? "text-ink" : "text-ink-body"}`}
                   >
                     {PIPELINE_STEP_LABELS[step.key]}
                   </span>
                   <span className="sr-only">
-                    {step.status === "COMPLETED"
-                      ? ", complete"
-                      : step.status === "RUNNING" && step.run.isStale
-                        ? ", interrupted"
-                        : step.status === "RUNNING"
-                          ? ", running"
-                          : step.status === "FAILED"
-                            ? ", needs attention"
-                            : ", pending"}
+                    {PIPELINE_STEP_LABELS[step.key]},{" "}
+                    {stepStatusLabel(step.status, step.run.isStale)}
                   </span>
                 </div>
                 {index < project.steps.length - 1 ? (
@@ -283,6 +363,12 @@ export function ProjectDetail({
               </li>
             ))}
           </ol>
+          {currentStep ? (
+            <p className="mt-3 text-xs font-semibold text-ink-body md:hidden">
+              Step {currentStep.position + 1} of {project.totalSteps} ·{" "}
+              {PIPELINE_STEP_LABELS[currentStep.key]}
+            </p>
+          ) : null}
         </section>
 
         {actionError ||

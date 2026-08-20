@@ -260,7 +260,7 @@ The detail workspace follows the demo-first structure selected during planning:
 - character and chapter result cards below;
 - inline state panels beside the relevant step or item rather than toast-only feedback.
 
-The UI language is English-only. Portrait cards use the demo's 3:4 framing and chapter cards use 16:10 framing; object-fit/cropping must preserve usable content when model output ratios differ.
+The UI language is English-only. Portrait cards use the demo's 3:4 framing and chapter cards use square 1:1 framing; prompts keep important subjects inside a central safe area so the UI does not need to crop them.
 
 While polling, the client may update transient visual state but must always replace it with the latest server view model. Polling stops on `completed`, `failed`, or `stale`; it must not create a second run. The browser must show completed image items as soon as they appear in the server response.
 
@@ -277,7 +277,7 @@ details. Server-side run metadata and recovery contracts remain unchanged.
 
 - Replace spinner-only feedback with an animated indeterminate progress bar, named phase copy, and elapsed time from the persisted run start. Never show a guessed percentage or promise an ETA that Gemini does not provide.
 - For image steps, show honest determinate item progress such as `1 of 2 portraits saved`; keep each completed image visible while the remaining item runs.
-- Keep a fixed 3:4 portrait frame and 16:10 illustration frame during loading, success, and failure so content never changes the media ratio.
+- Keep a fixed 3:4 portrait frame and square 1:1 illustration frame during loading, success, and failure so content never changes the media ratio.
 - Add a concise `aria-live` status update when the phase or item count changes; do not announce every polling tick.
 - Acceptance: after starting any step, a user can identify the step, current phase, elapsed time, and completed item count without relying on a frozen-looking icon.
 
@@ -299,7 +299,7 @@ details. Server-side run metadata and recovery contracts remain unchanged.
 
 - Replace the permanent full-book panel with a short source preview, character count, and `Read full text` action. Keep the complete text in a bounded accessible dialog with Escape and focus return.
 - Keep the saved style and source preview together as compact context cards so either remains available at every pipeline stage.
-- Bound portrait media near 3:4 and illustration media near 16:10 with responsive widths and stable frames; prompt content must not determine image height.
+- Bound portrait media near 3:4 and illustration media at 1:1 with responsive widths and stable frames; prompt content must not determine image height.
 - Use a code-native editorial paper composition for missing media: no centered spinner, avatar icon, or empty white gutters; keep the state label anchored away from the focal center.
 - Acceptance: the primary workspace is scannable at 375px, 768px, 1024px, and 1440px without hiding the source, style, status, retry, or recovery paths.
 
@@ -309,7 +309,7 @@ details. Server-side run metadata and recovery contracts remain unchanged.
 - Show a short prompt preview in each character/chapter card so the result is understandable before opening the full prompt.
 - Keep the preview to one readable line and use the existing brand paper/ink/orange tokens with restrained borders.
 - Keep the image container fixed and top-aligned even when prompt content grows; the prompt must never determine the illustration height.
-- Acceptance: opening `Read full prompt` does not change the illustration's 16:10 framing or create a long viewport jump; Escape, focus return, keyboard access, and reduced motion work.
+- Acceptance: opening `Read full prompt` does not change the illustration's square framing or create a long viewport jump; Escape, focus return, keyboard access, and reduced motion work.
 
 #### P1 — Remove low-value visual noise
 

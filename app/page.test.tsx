@@ -494,10 +494,13 @@ describe("foundation app shell", () => {
     expect(
       screen.getByText("Generating portrait for Rat…"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Generating…" })).toBeDisabled();
     expect(
-      screen.queryByText(/0 of 2 portraits saved/i),
-    ).not.toBeInTheDocument();
+      screen.getByRole("button", { name: "Generating portraits…" }),
+    ).toBeDisabled();
+    expect(screen.getByText(/0 of 2 portraits saved/i)).toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAccessibleName(
+      "Portraits generation in progress",
+    );
     expect(screen.queryByText("Generated results")).not.toBeInTheDocument();
   });
 
@@ -755,7 +758,9 @@ describe("foundation app shell", () => {
     const { unmount } = render(
       <ProjectDetail project={runningProject} user={user} />,
     );
-    expect(screen.getByRole("button", { name: "Generating…" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Generating style…" }),
+    ).toBeDisabled();
     expect(screen.getByLabelText(/Style direction/i)).toBeDisabled();
     expect(
       screen.queryByText(/reading the book and defining an art style/i),
@@ -1321,15 +1326,21 @@ describe("foundation app shell", () => {
     render(<ProjectDetail project={project} user={user} />);
 
     const generatingButton = screen.getByRole("button", {
-      name: "Generating…",
+      name: "Generating portraits…",
     });
     expect(generatingButton).toBeDisabled();
     expect(generatingButton.querySelector(".animate-spin")).not.toBeNull();
     expect(
       screen.getByText("Generating portrait for Rat…"),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-    expect(screen.queryByText(/Elapsed \d+[sm]/)).not.toBeInTheDocument();
+    expect(screen.getByRole("progressbar")).toHaveAccessibleName(
+      "Portraits generation in progress",
+    );
+    expect(
+      screen.getByText(/Elapsed \d+s · 1 of 2 portraits saved/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Step 3 of 5 · Portraits")).toBeInTheDocument();
+    expect(screen.getByText("Portraits, running")).toHaveClass("sr-only");
   });
 
   it("bounds chapter illustrations independently from their prompt", () => {
