@@ -64,6 +64,15 @@ export function ProjectDetail({
     currentStep?.status === "RUNNING" && currentStep.run.isStale;
   const currentStepIsRunning =
     currentStep?.status === "RUNNING" && !currentStep.run.isStale;
+  const currentStepActionLabel = currentStep
+    ? currentStep.key === "STYLE" && styleDraft.trim()
+      ? "Use this style"
+      : currentStep.status === "FAILED"
+        ? `Retry ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
+        : currentStep.key === "STYLE"
+          ? "Generate style from book"
+          : `Generate ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
+    : null;
   const shouldPoll = project.steps.some(
     (step) =>
       isImplementedPipelineStep(step.key) &&
@@ -207,10 +216,8 @@ export function ProjectDetail({
                   </>
                 ) : currentStepIsStale ? (
                   "Recover run"
-                ) : currentStep.status === "FAILED" ? (
-                  `Retry ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
                 ) : (
-                  `Generate ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
+                  currentStepActionLabel
                 )}
               </button>
             </div>

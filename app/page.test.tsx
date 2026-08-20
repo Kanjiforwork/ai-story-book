@@ -10,11 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { SignOutButton } from "@/components/sign-out-button";
 import { IdentityForm } from "@/components/identity-form";
-import { ChapterList } from "@/components/chapter-list";
-import { GenerationStatusFrame } from "@/components/generation-status-frame";
 import { ProjectDetail } from "@/components/project-detail";
 import { NewProjectForm } from "@/components/new-project-form";
-import { CharacterGrid } from "@/components/character-grid";
 import { AttemptHistoryPage } from "@/components/attempt-history-page";
 import type { GenerationRunView, ProjectDetailView } from "@/domain/project";
 import type { AuthenticatedUser } from "@/server/auth";
@@ -306,16 +303,25 @@ describe("foundation app shell", () => {
     expect(trigger).toHaveFocus();
   });
 
-  it("keeps the initial workspace focused on the next action and book text", () => {
+  it("keeps the initial workspace focused on an honest Style action", () => {
     render(<ProjectDetail project={projectFixture()} user={user} />);
 
     expect(
-      screen.getByRole("button", { name: "Generate style" }),
+      screen.getByRole("button", { name: "Generate style from book" }),
     ).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { name: "Art style" }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText(/Style direction/i)).toBeInTheDocument();
+    const styleDirection = screen.getByLabelText(/Style direction/i);
+    expect(styleDirection).toBeInTheDocument();
+    fireEvent.change(styleDirection, { target: { value: "   " } });
+    expect(
+      screen.getByRole("button", { name: "Generate style from book" }),
+    ).toBeInTheDocument();
+    fireEvent.change(styleDirection, { target: { value: "  anime  " } });
+    expect(
+      screen.getByRole("button", { name: "Use this style" }),
+    ).toBeInTheDocument();
     expect(
       screen.queryByText("Ready to generate an art style."),
     ).not.toBeInTheDocument();
@@ -541,153 +547,58 @@ describe("foundation app shell", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("renders a saved portrait beside a retryable partial failure", () => {
-    render(
-      <CharacterGrid
-        characters={[
-          {
-            id: "character-1",
-            name: "Mole",
-            position: 0,
-            prompt: "An adult mole portrait prompt.",
-            portrait: {
-              assetId: "asset-1",
-              assetUrl: "/api/assets/asset-1",
-              attempt: 1,
-              claimedAt: "2026-01-01T00:00:00.000Z",
-              errorCode: null,
-              errorMessage: null,
-              heartbeatAt: "2026-01-01T00:00:00.000Z",
-              isStale: false,
-              status: "COMPLETED",
-            },
-          },
-          {
-            id: "character-2",
-            name: "Rat",
-            position: 1,
-            prompt: "An adult rat portrait prompt.",
-            portrait: {
-              assetId: null,
-              assetUrl: null,
-              attempt: 1,
-              claimedAt: "2026-01-01T00:00:00.000Z",
-              errorCode: "GEMINI_FAILED",
-              errorMessage: "Mock image service rejected Rat.",
-              heartbeatAt: "2026-01-01T00:00:00.000Z",
-              isStale: false,
-              status: "FAILED",
-            },
-          },
-        ]}
-        onRetry={vi.fn()}
-      />,
-    );
+  it("keeps a saved portrait visible beside a retryable partial failure", () => {
+    const project = projectFixture();
+    project.completedSteps = 2;
+    project.status = "IN_PROGRESS";
+    project.style = "Warm painted watercolour.";
+    project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
+    project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
+    project.steps[2] = {
+      ...project.steps[2],
+      run: {
+        ...project.steps[2].run,
+        attempt: 1,
+        errorCode: "GEMINI_FAILED",
+        errorMessage: "Mock image service rejected Rat.",
+      },
+      status: "FAILED",
+    };
+    project.characters = [
+      {
+        id: "character-1",
+        name: "Mole",
+        position: 0,
+        prompt: "An adult mole portrait prompt.",
+        portrait: {
+          assetId: "asset-1",
+          assetUrl: "/api/assets/asset-1",
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: null,
+          errorMessage: null,
+          heartbeatAt: "2026-01-01T00:00:00.000Z",
+          isStale: false,
+          status: "COMPLETED",
+        },
+      },
+      characterFixture("character-2", "Rat", "FAILED"),
+    ];
 
-    expect(screen.getByAltText("Portrait of Mole")).toBeInTheDocument();
-    expect(screen.getByText("Portrait saved")).toHaveClass(
-      "bg-orange",
-      "text-white",
-    );
-    expect(
-      screen.getByText("Mock image service rejected Rat."),
-    ).toBeInTheDocument();
-    expect(
-      screen.getByRole("button", { name: "Retry portrait" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText(/1 of 2 saved/)).toBeInTheDocument();
+    render(<ProjectDetail project={project} user={user} />);
+
     expect(screen.getByAltText("Portrait of Mole")).toHaveAttribute(
       "src",
       "/api/assets/asset-1",
     );
-  });
-
-  it("disables portrait retries while another retry action is pending", () => {
-    const retry = vi.fn();
-    render(
-      <CharacterGrid
-        characters={[
-          {
-            id: "character-1",
-            name: "Mole",
-            position: 0,
-            prompt: "An adult mole portrait prompt.",
-            portrait: {
-              assetId: null,
-              assetUrl: null,
-              attempt: 1,
-              claimedAt: "2026-01-01T00:00:00.000Z",
-              errorCode: "GEMINI_FAILED",
-              errorMessage: "Mole failed.",
-              heartbeatAt: "2026-01-01T00:00:00.000Z",
-              isStale: false,
-              status: "FAILED",
-            },
-          },
-          {
-            id: "character-2",
-            name: "Rat",
-            position: 1,
-            prompt: "An adult rat portrait prompt.",
-            portrait: {
-              assetId: null,
-              assetUrl: null,
-              attempt: 1,
-              claimedAt: "2026-01-01T00:00:00.000Z",
-              errorCode: "GEMINI_FAILED",
-              errorMessage: "Rat failed.",
-              heartbeatAt: "2026-01-01T00:00:00.000Z",
-              isStale: false,
-              status: "FAILED",
-            },
-          },
-        ]}
-        onRetry={retry}
-        retryDisabled
-        retryingCharacterId="character-1"
-      />,
+    expect(screen.getByText("Generation failed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Mock image service rejected Rat.",
     );
-
     expect(
-      screen.getAllByRole("button", { name: /Retry portrait|Retrying/ }),
-    ).toHaveLength(2);
-    expect(
-      screen
-        .getAllByRole("button", { name: /Retry portrait|Retrying/ })
-        .every((button) => (button as HTMLButtonElement).disabled),
-    ).toBe(true);
-    expect(retry).not.toHaveBeenCalled();
-  });
-
-  it("renders private illustration assets without the Next image optimizer", () => {
-    render(
-      <ChapterList
-        chapters={[
-          {
-            id: "chapter-1",
-            name: "The River",
-            position: 0,
-            prompt: "A single river scene.",
-            illustration: {
-              assetId: "asset-illustration-1",
-              assetUrl: "/api/assets/asset-illustration-1",
-              attempt: 1,
-              claimedAt: "2026-01-01T00:00:00.000Z",
-              errorCode: null,
-              errorMessage: null,
-              heartbeatAt: "2026-01-01T00:00:00.000Z",
-              isStale: false,
-              status: "COMPLETED",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(screen.getByAltText("Illustration for The River")).toHaveAttribute(
-      "src",
-      "/api/assets/asset-illustration-1",
-    );
+      screen.getByRole("button", { name: "Retry portraits" }),
+    ).toBeInTheDocument();
   });
 
   it("names running and stale recovery states in the header action", () => {
@@ -737,102 +648,54 @@ describe("foundation app shell", () => {
     );
   });
 
-  it("keeps the status frame structure consistent across recovery and completion", () => {
-    const recover = vi.fn();
-    const retry = vi.fn();
-
-    const { rerender } = render(
-      <GenerationStatusFrame
-        action={{ label: "Recover run", onClick: recover }}
-        eyebrow="RECOVERY"
-        message="Generation paused. Your saved work is safe."
-        meta="Ready to recover"
-        progress="paused"
-      />,
+  it("shows a failed illustration with the active route retry action", () => {
+    const project = projectFixture();
+    project.completedSteps = 4;
+    project.status = "IN_PROGRESS";
+    project.style = "Warm painted watercolour.";
+    project.steps = project.steps.map((step, index) =>
+      index < 4 ? { ...step, status: "COMPLETED" as const } : step,
     );
+    project.steps[4] = {
+      ...project.steps[4],
+      run: {
+        ...project.steps[4].run,
+        attempt: 1,
+        errorCode: "GEMINI_FAILED",
+        errorMessage: "The image model timed out.",
+      },
+      status: "FAILED",
+    };
+    project.chapters = [
+      {
+        id: "chapter-1",
+        name: "The River",
+        position: 0,
+        prompt: "A single river scene.",
+        illustration: {
+          assetId: null,
+          assetUrl: null,
+          attempt: 1,
+          claimedAt: "2026-01-01T00:00:00.000Z",
+          errorCode: "GEMINI_FAILED",
+          errorMessage: "The image model timed out.",
+          heartbeatAt: "2026-01-01T00:00:00.000Z",
+          isStale: false,
+          status: "FAILED",
+        },
+      },
+    ];
 
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    render(<ProjectDetail project={project} user={user} />);
+
+    expect(screen.getByText("Generation failed")).toBeInTheDocument();
+    expect(screen.getByText("Failed")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The image model timed out.",
+    );
     expect(
-      screen.getByRole("button", { name: "Recover run" }),
+      screen.getByRole("button", { name: "Retry illustrations" }),
     ).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Recover run" }));
-    expect(recover).toHaveBeenCalledOnce();
-
-    rerender(
-      <GenerationStatusFrame
-        action={{ label: "Retry portraits", onClick: retry }}
-        eyebrow="RETRY"
-        message="The image model timed out before this step finished."
-        meta="Ready to retry"
-        progress="failed"
-      />,
-    );
-
-    expect(
-      screen.getByRole("button", { name: "Retry portraits" }),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-
-    rerender(
-      <GenerationStatusFrame
-        detail="1 of 2 portraits saved"
-        eyebrow="GENERATING"
-        message="Finding adult characters and writing portrait prompts."
-        meta="Elapsed 6s"
-        progress="running"
-      />,
-    );
-
-    expect(screen.getByRole("progressbar")).toBeInTheDocument();
-
-    rerender(
-      <GenerationStatusFrame
-        detail="Results are saved and ready to revisit."
-        eyebrow="COMPLETE"
-        message="All five steps are complete."
-        meta="Saved"
-        progress="complete"
-      />,
-    );
-
-    expect(
-      screen.getByText("All five steps are complete."),
-    ).toBeInTheDocument();
-    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button")).not.toBeInTheDocument();
-  });
-
-  it("shows a failed illustration as retryable chapter progress", () => {
-    render(
-      <ChapterList
-        chapters={[
-          {
-            id: "chapter-1",
-            name: "The River",
-            position: 0,
-            prompt: "A single river scene.",
-            illustration: {
-              assetId: null,
-              assetUrl: null,
-              attempt: 1,
-              claimedAt: "2026-01-01T00:00:00.000Z",
-              errorCode: "GEMINI_FAILED",
-              errorMessage: "The image model timed out.",
-              heartbeatAt: "2026-01-01T00:00:00.000Z",
-              isStale: false,
-              status: "FAILED",
-            },
-          },
-        ]}
-      />,
-    );
-
-    expect(screen.getAllByText("Illustration failed")).toHaveLength(1);
-    expect(screen.getByText("Needs retry")).toBeInTheDocument();
-    expect(
-      screen.getByText("0 of 1 saved · retry Illustrations above"),
-    ).toBeInTheDocument();
-    expect(screen.getByText("The image model timed out.")).toBeInTheDocument();
   });
 
   it("ignores an older polling response after a newer server view wins", async () => {
@@ -1029,9 +892,10 @@ describe("foundation app shell", () => {
     ).toBeInTheDocument();
     expect(screen.getByAltText("Portrait of Mole")).toBeInTheDocument();
     expect(screen.getByAltText("Portrait of Rat")).toBeInTheDocument();
-    expect(
-      screen.getByAltText("Illustration for Chapter 1"),
-    ).toBeInTheDocument();
+    expect(screen.getByAltText("Illustration for Chapter 1")).toHaveAttribute(
+      "src",
+      "/api/assets/illustration-1",
+    );
     expect(
       screen.getByAltText("Illustration for Chapter 1").closest("button"),
     ).toHaveAttribute("aria-label", "Read prompt for Chapter 1");
@@ -1130,40 +994,30 @@ describe("foundation app shell", () => {
       "An adult mole portrait with detailed clothing, posture, warm light, and a consistent storybook palette. ".repeat(
         3,
       );
+    const project = projectFixture();
+    project.completedSteps = 2;
+    project.status = "IN_PROGRESS";
+    project.style = "Warm painted watercolour.";
+    project.steps[0] = { ...project.steps[0], status: "COMPLETED" };
+    project.steps[1] = { ...project.steps[1], status: "COMPLETED" };
+    project.characters = [
+      {
+        ...characterFixture("character-1", "Mole"),
+        prompt,
+      },
+    ];
 
-    const { unmount } = render(
-      <CharacterGrid
-        characters={[
-          {
-            id: "character-1",
-            name: "Mole",
-            position: 0,
-            prompt,
-            portrait: {
-              assetId: null,
-              assetUrl: null,
-              attempt: 0,
-              claimedAt: null,
-              errorCode: null,
-              errorMessage: null,
-              heartbeatAt: null,
-              isStale: false,
-              status: "PENDING",
-            },
-          },
-        ]}
-      />,
+    render(<ProjectDetail project={project} user={user} />);
+
+    const frame = screen
+      .getByText("Not generated yet")
+      .closest("span.relative");
+    expect(frame).toHaveClass(
+      "h-[28rem]",
+      "md:h-[32rem]",
+      "lg:h-[clamp(24rem,36vw,32rem)]",
     );
-
-    const frame = screen.getByText("Queued").closest("div.relative");
-    expect(frame).toHaveClass("w-full");
-    expect(frame).not.toHaveClass("max-w-[320px]");
-    expect(
-      screen.getByText(/An adult mole portrait with detailed clothing/),
-    ).toBeInTheDocument();
-    const trigger = screen.getByRole("button", {
-      name: "Read full prompt",
-    });
+    const trigger = screen.getByRole("button", { name: /Mole/ });
     trigger.focus();
     fireEvent.click(trigger);
     expect(
@@ -1174,7 +1028,6 @@ describe("foundation app shell", () => {
 
     fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" });
     expect(trigger).toHaveFocus();
-    unmount();
   });
 
   it("keeps image progress named in the gallery and header while portraits run", () => {
@@ -1243,44 +1096,5 @@ describe("foundation app shell", () => {
     expect(screen.queryByText(/Elapsed/)).not.toBeInTheDocument();
     expect(screen.getByText("Step 3 of 5 · Portraits")).toBeInTheDocument();
     expect(screen.getByText("Portraits, running")).toHaveClass("sr-only");
-  });
-
-  it("bounds chapter illustrations independently from their prompt", () => {
-    render(
-      <ChapterList
-        chapters={[
-          {
-            id: "chapter-1",
-            name: "The River",
-            position: 0,
-            prompt: "A single river scene.",
-            illustration: {
-              assetId: "asset-illustration-1",
-              assetUrl: "/api/assets/asset-illustration-1",
-              attempt: 1,
-              claimedAt: "2026-01-01T00:00:00.000Z",
-              errorCode: null,
-              errorMessage: null,
-              heartbeatAt: "2026-01-01T00:00:00.000Z",
-              isStale: false,
-              status: "COMPLETED",
-            },
-          },
-        ]}
-      />,
-    );
-
-    const image = screen.getByAltText("Illustration for The River");
-    expect(image.parentElement).toHaveClass("w-full");
-    expect(image.parentElement).not.toHaveClass("max-w-[608px]");
-    expect(image.parentElement).not.toHaveClass("max-h-[380px]");
-    expect(
-      screen.getByRole("button", { name: "Read full prompt" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Illustration saved")).toHaveClass(
-      "bg-orange",
-      "text-white",
-    );
-    expect(screen.getByText("A single river scene.")).toBeInTheDocument();
   });
 });

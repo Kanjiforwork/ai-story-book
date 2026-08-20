@@ -81,14 +81,10 @@ Keep page/container logic separate from presentational components. Components re
 
 ### Project detail
 
-- `ProjectHeader` — title, creation date, and back navigation.
-- `PipelineStepper` — done/current/pending states for all five steps.
-- `StepActionPanel` — one clear action for the current step, named running state, error, retry, and stale recovery.
-- `StyleField` — optional user-supplied style on step 1 only.
-- `CharacterGrid` / `CharacterCard` — name, prompt, portrait, per-item loading/error state.
-- `ChapterList` / `ChapterCard` — name, prompt, illustration, per-item loading/error state.
-- `BookTextPanel` / `BookTextModal` — readable full text at every pipeline stage.
-- `GenerationProgress` — item-level progress; completed images remain visible while other items run.
+- `ProjectDetail` — title, back navigation, five-step progress, one current-step action, error/retry state, and stale recovery.
+- `CompletedProjectGallery` — style, source text, project attempts, portraits, and the chapter illustration in one persistent contact sheet; completed images stay visible while another item runs or fails.
+- `ImageGenerationSpinner` — named per-image running feedback that respects reduced motion.
+- `ProjectDetailDialog` — full source, style, and generated prompts with Escape handling and focus return.
 
 Prefer domain names over generic components such as `Card1`, `Panel`, or `MagicGenerator`. Extract a component when it owns a meaningful state boundary or is reused; do not split every wrapper into a component.
 
