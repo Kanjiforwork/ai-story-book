@@ -32,19 +32,6 @@ const RUNNING_STEP_COPY = {
   ILLUSTRATIONS: "Generating illustration…",
 } as const;
 
-function formatElapsed(startedAt: string | null, now: number): string | null {
-  if (!startedAt) return null;
-  const elapsedSeconds = Math.max(
-    0,
-    Math.floor((now - new Date(startedAt).getTime()) / 1_000),
-  );
-  const minutes = Math.floor(elapsedSeconds / 60);
-  const seconds = elapsedSeconds % 60;
-  return minutes > 0
-    ? `${minutes}m ${String(seconds).padStart(2, "0")}s`
-    : `${seconds}s`;
-}
-
 function stepStatusLabel(status: string, isStale: boolean): string {
   if (status === "COMPLETED") return "complete";
   if (status === "RUNNING" && isStale) return "interrupted";
@@ -68,7 +55,6 @@ export function ProjectDetail({
   const [actionError, setActionError] = useState<string | null>(null);
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false);
   const [styleDialogOpen, setStyleDialogOpen] = useState(false);
-  const [now, setNow] = useState(() => Date.now());
   const latestRefreshId = useRef(0);
   const implementedSteps = project.steps.filter((step) =>
     isImplementedPipelineStep(step.key),
@@ -87,28 +73,6 @@ export function ProjectDetail({
       step.status === "RUNNING" &&
       !step.run.isStale,
   );
-  const elapsed = currentStepIsRunning
-    ? formatElapsed(currentStep.run.claimedAt, now)
-    : null;
-  const itemProgress =
-    currentStep?.key === "PORTRAITS"
-      ? {
-          label: "portraits saved",
-          saved: project.characters.filter(
-            (character) => character.portrait.status === "COMPLETED",
-          ).length,
-          total: project.characters.length,
-        }
-      : currentStep?.key === "ILLUSTRATIONS"
-        ? {
-            label: "illustrations saved",
-            saved: project.chapters.filter(
-              (chapter) => chapter.illustration.status === "COMPLETED",
-            ).length,
-            total: project.chapters.length,
-          }
-        : null;
-
   async function refreshProject() {
     const refreshId = latestRefreshId.current + 1;
     latestRefreshId.current = refreshId;
@@ -140,14 +104,6 @@ export function ProjectDetail({
     // The server view controls whether polling continues.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project.id, shouldPoll]);
-
-  useEffect(() => {
-    if (!currentStepIsRunning || !currentStep.run.claimedAt) return;
-    const updateNow = () => setNow(Date.now());
-    updateNow();
-    const interval = window.setInterval(updateNow, 1_000);
-    return () => window.clearInterval(interval);
-  }, [currentStep?.run.claimedAt, currentStepIsRunning]);
 
   async function runCurrentStep() {
     if (!currentStep) return;
@@ -255,7 +211,7 @@ export function ProjectDetail({
             </p>
           </div>
           {!selectedRunReadOnly && currentStep ? (
-            <div className="mt-1 shrink-0 text-right">
+            <div className="mt-1 shrink-0">
               <button
                 className="inline-flex min-h-10 items-center justify-center gap-2 rounded-full bg-orange px-5 text-xs font-bold text-white shadow-[0_2px_6px_rgba(255,107,0,0.18)] transition hover:bg-orange-hover focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-orange/20 disabled:cursor-wait disabled:opacity-70"
                 disabled={currentStepIsRunning || pendingAction !== null}
@@ -284,26 +240,6 @@ export function ProjectDetail({
                   `Generate ${PIPELINE_STEP_LABELS[currentStep.key].toLowerCase()}`
                 )}
               </button>
-              {currentStepIsRunning ? (
-                <div
-                  aria-live="polite"
-                  className="mt-2 min-w-44 text-[11px] tabular-nums text-ink-muted"
-                >
-                  <p>
-                    {elapsed ? `Elapsed ${elapsed}` : "Working…"}
-                    {itemProgress
-                      ? ` · ${itemProgress.saved} of ${itemProgress.total} ${itemProgress.label}`
-                      : ""}
-                  </p>
-                  <div
-                    aria-label={`${PIPELINE_STEP_LABELS[currentStep.key]} generation in progress`}
-                    className="generation-progress-track mt-2 h-0.5"
-                    role="progressbar"
-                  >
-                    <span className="generation-progress-bar" />
-                  </div>
-                </div>
-              ) : null}
             </div>
           ) : (
             <span

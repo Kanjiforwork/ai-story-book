@@ -497,10 +497,10 @@ describe("foundation app shell", () => {
     expect(
       screen.getByRole("button", { name: "Generating portraits…" }),
     ).toBeDisabled();
-    expect(screen.getByText(/0 of 2 portraits saved/i)).toBeInTheDocument();
-    expect(screen.getByRole("progressbar")).toHaveAccessibleName(
-      "Portraits generation in progress",
-    );
+    expect(
+      screen.queryByText(/0 of 2 portraits saved/i),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
     expect(screen.queryByText("Generated results")).not.toBeInTheDocument();
   });
 
@@ -1333,12 +1333,8 @@ describe("foundation app shell", () => {
     expect(
       screen.getByText("Generating portrait for Rat…"),
     ).toBeInTheDocument();
-    expect(screen.getByRole("progressbar")).toHaveAccessibleName(
-      "Portraits generation in progress",
-    );
-    expect(
-      screen.getByText(/Elapsed \d+s · 1 of 2 portraits saved/),
-    ).toBeInTheDocument();
+    expect(screen.queryByRole("progressbar")).not.toBeInTheDocument();
+    expect(screen.queryByText(/Elapsed/)).not.toBeInTheDocument();
     expect(screen.getByText("Step 3 of 5 · Portraits")).toBeInTheDocument();
     expect(screen.getByText("Portraits, running")).toHaveClass("sr-only");
   });

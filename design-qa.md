@@ -20,7 +20,7 @@ are intentionally not presented as reviewer evidence.
 - Desktop and narrow viewport checks found no horizontal overflow; dialog focus and Escape return are covered by component tests.
 - The real 2-of-5 A Christmas Carol project was checked at 1280px and 390px: the old generated-results section is absent, the metadata card leads the contact sheet, and two pending portrait frames follow without horizontal overflow.
 - The current completed project was rechecked on the live dev server at 390px and 1440px after the review fixes; document width matched the viewport at both sizes, step names remained available to assistive text, and the gallery kept its intended reading order.
-- Active work now names the running step and exposes elapsed/item progress in a compact header treatment. Reduced-motion users receive a static ring and progress track instead of an infinite spinner.
+- Active work names the running step inside the compact header action. Image cards carry their own specific loading states, so no elapsed label or decorative progress track is shown below the action; reduced-motion users receive a static ring instead of an infinite spinner.
 
 ## Result
 

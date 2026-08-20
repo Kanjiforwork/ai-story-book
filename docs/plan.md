@@ -71,7 +71,7 @@ Text/context calls retain the notebook's chaining model. Image calls use a share
 ### 3.3 Loading, failure, and recovery behavior
 
 - `ready`: the current step has one enabled action.
-- `running`: show the named step, run start time, and persisted item progress; disable the run action while the claim is active.
+- `running`: name the active step in the disabled header action; image cards show which items are still generating and which results have already landed.
 - `partial`: keep completed portraits or illustrations visible while failed items remain retryable.
 - `failed`: explain the operation that failed and expose retry for that step only.
 - `stale`: if the persisted heartbeat exceeds the stale timeout, show an explicit Recover action; recovery does not call Gemini.
@@ -275,11 +275,11 @@ details. Server-side run metadata and recovery contracts remain unchanged.
 
 #### P0 — Make long-running work legible
 
-- Replace spinner-only feedback with an animated indeterminate progress bar, named phase copy, and elapsed time from the persisted run start. Never show a guessed percentage or promise an ETA that Gemini does not provide.
-- For image steps, show honest determinate item progress such as `1 of 2 portraits saved`; keep each completed image visible while the remaining item runs.
+- Keep the compact header action and name the exact running step, such as `Generating portraits…`; do not add elapsed time, a decorative progress track, guessed percentages, or an ETA.
+- For image steps, show progress directly on the item cards: completed images remain visible while unfinished items retain their specific generation state.
 - Keep a fixed 3:4 portrait frame and square 1:1 illustration frame during loading, success, and failure so content never changes the media ratio.
-- Add a concise `aria-live` status update when the phase or item count changes; do not announce every polling tick.
-- Acceptance: after starting any step, a user can identify the step, current phase, elapsed time, and completed item count without relying on a frozen-looking icon.
+- Keep the named action in an `aria-live` region and give every image item a specific status label; do not announce every polling tick.
+- Acceptance: after starting any step, a user can identify the running step and, for image work, which item is still generating without extra status chrome below the action.
 
 #### P0 — Make custom style input fast and clear
 
