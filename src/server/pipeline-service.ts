@@ -1869,6 +1869,24 @@ async function ensureBookContext(
 
   let fileName = project.gemini_file_name;
   let fileUri = project.gemini_file_uri;
+  if (
+    !project.root_interaction_id &&
+    fileName &&
+    fileUri &&
+    adapter.getUploadedBook
+  ) {
+    const storedFileName = fileName;
+    assertPipelineRunActive(dataDir, claim);
+    const uploaded = await runWithPipelineHeartbeat(
+      dataDir,
+      claim,
+      staleRunMs,
+      () => adapter.getUploadedBook!(storedFileName),
+    );
+    assertPipelineRunActive(dataDir, claim);
+    fileName = uploaded?.name ?? null;
+    fileUri = uploaded?.uri ?? null;
+  }
   if (!fileName || !fileUri) {
     assertPipelineRunActive(dataDir, claim);
     const uploaded = await runWithPipelineHeartbeat(

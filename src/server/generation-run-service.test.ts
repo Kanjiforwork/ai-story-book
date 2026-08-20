@@ -64,6 +64,11 @@ function textAdapter(calls: {
   let interactionNumber = 0;
   return {
     modelId: "gemini-test-text",
+    getUploadedBook: async (fileName) => ({
+      mimeType: "text/plain",
+      name: fileName,
+      uri: "https://example.test/" + fileName,
+    }),
     uploadBook: async () => {
       calls.uploads += 1;
       return {
@@ -287,6 +292,7 @@ describe("generation runs", () => {
     expect((roots[0] as { interaction_id: string }).interaction_id).not.toBe(
       (roots[1] as { interaction_id: string }).interaction_id,
     );
+    expect(calls.uploads).toBe(1);
     selectedNew.close();
 
     const beforeSelect = { ...calls };
@@ -320,6 +326,31 @@ describe("generation runs", () => {
       }),
     ).toThrow(/read-only/);
     selectedOldDatabase.close();
+  });
+
+  it("reuploads an expired project source before creating a fresh root", async () => {
+    const value = fixture();
+    const calls = { contexts: 0, interactions: 0, uploads: 0 };
+    const adapter = textAdapter(calls);
+
+    await runStep(value, "STYLE", adapter);
+
+    const database = openDatabase(value.dataDir);
+    const newRun = createGenerationRun(database, {
+      projectId: value.project.id,
+      style: "watercolor",
+      userId: value.user.id,
+    });
+    database.close();
+    adapter.getUploadedBook = vi.fn(async () => null);
+
+    await runStep(value, "CHARACTERS", adapter, {
+      generationRunId: newRun.id,
+    });
+
+    expect(adapter.getUploadedBook).toHaveBeenCalledTimes(1);
+    expect(calls.uploads).toBe(2);
+    expect(calls.contexts).toBe(2);
   });
 
   it("does not share source or generated state between projects", async () => {

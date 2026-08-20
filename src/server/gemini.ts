@@ -18,6 +18,7 @@ export type GeminiTextInteraction = {
 
 export type GeminiTextAdapter = {
   readonly modelId: string;
+  getUploadedBook?(fileName: string): Promise<GeminiUploadedFile | null>;
   uploadBook(filePath: string): Promise<GeminiUploadedFile>;
   createBookContext(fileUri: string): Promise<GeminiTextInteraction>;
   createTextInteraction(input: {
@@ -56,6 +57,23 @@ function toTextInteraction(value: unknown): GeminiTextInteraction {
     throw new GeminiError("Gemini returned an empty text interaction.");
   }
   return { id, outputText };
+}
+
+function toContextInteraction(value: unknown): GeminiTextInteraction {
+  const id = readInteractionId(value);
+  if (!id) {
+    throw new GeminiError("Gemini did not return a context interaction ID.");
+  }
+  return { id, outputText: readInteractionText(value) };
+}
+
+function isNotFoundError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "status" in error &&
+    error.status === 404
+  );
 }
 
 async function waitForUploadedFile(
@@ -103,6 +121,29 @@ export function createGeminiTextAdapter(env: ServerEnv): GeminiTextAdapter {
   return {
     modelId,
 
+    async getUploadedBook(fileName) {
+      try {
+        const file = await waitForUploadedFile(
+          client,
+          await client.files.get({ name: fileName }),
+        );
+        if (!file.name || !file.uri) {
+          throw new GeminiError("Gemini did not return a reusable file URI.");
+        }
+        return {
+          name: file.name,
+          uri: file.uri,
+          mimeType: file.mimeType ?? "text/plain",
+        };
+      } catch (error) {
+        if (isNotFoundError(error)) return null;
+        if (error instanceof GeminiError) throw error;
+        throw new GeminiError("Gemini could not verify the book file.", {
+          cause: error,
+        });
+      }
+    },
+
     async uploadBook(filePath) {
       try {
         const uploadedFile = await client.files.upload({
@@ -141,7 +182,7 @@ export function createGeminiTextAdapter(env: ServerEnv): GeminiTextAdapter {
             { type: "document", uri: fileUri, mime_type: "text/plain" },
           ],
         });
-        return toTextInteraction(interaction);
+        return toContextInteraction(interaction);
       } catch (error) {
         if (error instanceof GeminiError) throw error;
         throw new GeminiError("Gemini could not create the book context.", {
